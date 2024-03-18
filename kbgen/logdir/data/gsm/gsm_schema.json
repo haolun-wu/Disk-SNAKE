@@ -1,0 +1,18 @@
+{
+  "phone": {
+    "model": 2,
+    "oem": 1,
+    "network_edge": 1,
+    "weight": 0,
+    "height": 0,
+    "depth": 0,
+    "width": 0,
+    "display_size": 0,
+    "battery": 0,
+    "launch": {
+      "day": 0,
+      "month": 0,
+      "year": 0
+    }
+  }
+}
