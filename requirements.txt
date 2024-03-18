@@ -8,7 +8,7 @@ wandb
 kaggle
 tiktoken
 
-jax
+# jax
 flax
 optax
 numpy
