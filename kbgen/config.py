@@ -1,12 +1,10 @@
 # rootdir = "/work/submit/kitouni/kbgen-logdir"
 rootdir = "logdir"
 common_defaults = {
-    # "d_model": 8,               # Model dimension, must be divisible by nhead
-    "d_model": 4,               # Model dimension, must be divisible by nhead
+    "d_model": 8,               # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,             # Multiplier for the inner dim in feed forward layer
     "nhead": 2,                 # Number of attention heads in Entity encoder + text model if custom
-    # "num_layers": 4,            # Entity encoder layers for entity Encoder
-    "num_layers": 2,            # Entity encoder layers for entity Encoder
+    "num_layers": 4,            # Entity encoder layers for entity Encoder
     "field_encoder_layers": 2,  # number of layers for field encoders
     "field_decoder_layers": 3,  # number of layers for field decoders
     "num_emb": "periodic",      # Type of numerical embedding dice, periodic, binned
@@ -14,7 +12,7 @@ common_defaults = {
     "tie_numerical_decoders": False,    # Tie numerical decoders across fields
     "tie_mask_embeddings": True,        # Tie mask embeddings across fields (mask embs are what the entity encoder sees)
     # "epochs": 1000,          # Number of epochs to train for
-    "epochs": 10,          # Number of epochs to train for
+    "epochs": 100,          # Number of epochs to train for
     "batch_size": 64,        # Batch size
     "lr": 1e-4,              # Learning rate
     "weight_decay": 0,       # Weight decay

@@ -24,7 +24,11 @@ if __name__ == "__main__":
 
     # Load all data to GPU  (because we can with GSM) ----------------
     input_dict = dataset.input_dict.to(device)
+    print("input_dict:", input_dict.keys())
+    print("input_dict:", input_dict['phone.weight'])
     pad_mask_dict = dataset.pad_mask_dict.to(device)
+    print("pad_mask_dict:", pad_mask_dict.keys())
+    print("pad_mask_dict:", pad_mask_dict['phone.weight'])
 
     trainloader, testloader = dataset.get_loaders(config.batch_size)
     # Init model -----------------------------------------------------

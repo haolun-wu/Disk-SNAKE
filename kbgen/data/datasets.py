@@ -270,7 +270,7 @@ class GSM(Dataset):
 
         # load data
         # df_path = os.path.join(path, "gsm_processed.csv")
-        df_path = os.path.join(path, "gsm_processed_500.csv")
+        df_path = os.path.join(path, "gsm_processed_50.csv")
         schema_path = os.path.join(path, "gsm_schema.json")
         for p in [path, df_path, schema_path]:
             if not os.path.exists(p):
@@ -281,6 +281,8 @@ class GSM(Dataset):
                 )
         df = pd.read_csv(df_path)
         schema = json.loads(open(schema_path).read())
+        print("df:", df)
+        print("df:", df['weight'])
 
         # schema is for fields and their basic types
         types_to_nodes = schema_utils.by_types(schema)
@@ -340,6 +342,8 @@ class GSM(Dataset):
             tokenizer=config.get("tokenizer", None),
             numerical_tokenizer=config.get("numerical_tokenizer", None),
         )
+        print("dataset:", dataset)
+
         if update:
             config.update(
                 {
