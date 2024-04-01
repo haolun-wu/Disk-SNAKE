@@ -27,8 +27,12 @@ class Dataset:
         numerical_tokenizer=None,
     ) -> None:
         self._df = df
+        print("in data df:", self._df)
         self.fields = fields
+        print("in data fields:", self.fields)
+        print("in data fields:", len(fields.all_fields))
         self.df = self._df.loc[:, fields.all_fields]
+        print("in data df:", self.df)
         self.df = self.transform_numerical()[fields.all_fields]
         self.numerical_pad_token_id = -1000
         self.categorical_pad_token_id = 0
@@ -271,7 +275,7 @@ class GSM(Dataset):
         # load data
         # df_path = os.path.join(path, "gsm_processed.csv")
         df_path = os.path.join(path, "gsm_processed_50.csv")
-        schema_path = os.path.join(path, "gsm_schema.json")
+        schema_path = os.path.join(path, "gsm_schema_mul.json")
         for p in [path, df_path, schema_path]:
             if not os.path.exists(p):
                 raise ValueError(
@@ -280,16 +284,30 @@ class GSM(Dataset):
                     " Also make sure to set the `rootdir` variable in `config.py`."
                 )
         df = pd.read_csv(df_path)
+
+        # Splitting the DataFrame into two halves
+        df_first_half = df.iloc[::2].reset_index(drop=True)
+        df_second_half = df.iloc[1::2].reset_index(drop=True)
+
+        # Renaming columns for each half
+        df_first_half.columns = [f'super.0.phone.{col}' for col in df_first_half.columns]
+        df_second_half.columns = [f'super.1.phone.{col}' for col in df_second_half.columns]
+
+        # Concatenating the two halves side by side
+        df_multi = pd.concat([df_first_half, df_second_half], axis=1)
+
         schema = json.loads(open(schema_path).read())
         print("schema:", schema)
-        print("df:", df)
-        print("df:", df['weight'])
+        print("df_multi:", df_multi)
 
         # schema is for fields and their basic types
         types_to_nodes = schema_utils.by_types(schema)
         node_ids = schema_utils.get_ids(schema)
-        columns = schema_utils.match_fields_to_nodes(df.columns, node_ids).values()
-        df.columns = list(columns)  # rename columns to match schema
+        print("types_to_nodes:", types_to_nodes)
+        print("node_ids:", node_ids)
+
+        columns = schema_utils.match_fields_to_nodes(df_multi.columns, node_ids).values()
+        df_multi.columns = list(columns)  # rename columns to match schema
 
         self.fields = Fields(
             numerical=types_to_nodes[0],
@@ -299,8 +317,9 @@ class GSM(Dataset):
             text=types_to_nodes[2],
             # text=[],
         )
+        print("self.fields:", self.fields)
         super().__init__(
-            df,
+            df_multi,
             self.fields,
             seed,
             test_size,
@@ -360,8 +379,8 @@ class GSM(Dataset):
     def remove_similar(self, train_idx, test_idx):
         train_df = self._df.iloc[train_idx]
         test_df = self._df.iloc[test_idx]
-        mask1 = test_df["phone.model"].isin(train_df["phone.model"])
-        mask2 = test_df["phone.oem"].isin(train_df["phone.oem"])
+        mask1 = test_df["super.0.phone.model"].isin(train_df["super.0.phone.model"])
+        mask2 = test_df["super.0.phone.oem"].isin(train_df["super.0.phone.oem"])
         mask = mask1 & mask2
         test_idx = np.array(test_idx)
         new_test_idx = test_idx[~mask]
@@ -398,3 +417,4 @@ class DataLoader:
             return div
         else:
             return div + 1
+
