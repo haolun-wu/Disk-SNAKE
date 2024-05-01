@@ -17,10 +17,20 @@ def parse_args(config):
         if isinstance(value, bool):
             parser.add_argument(f"--{key}", action="store_true", default=value)
         elif isinstance(value, list):
-            parser.add_argument(f"--{key}", type=type(value[0]), default=value, nargs="+")
+            type_ = type(value[0]) if len(value) else str
+            parser.add_argument(f"--{key}", type=type_, default=value, nargs="+")
         else:
             parser.add_argument(f"--{key}", type=type(value), default=value)
     args = NamespaceDict(parser.parse_args())
+
+    # check_config_for_training(config):
+    if (
+        config["num_categorical_decoder_experts"] == 0
+        and config["condition_decoders_on_hierarchy"] == 1
+    ):
+        raise ValueError(
+            "condition_decoders_on_hierarchy requires num_categorical_decoder_experts > 0"
+        )
     return args
 
 

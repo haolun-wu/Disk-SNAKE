@@ -1,5 +1,5 @@
 """
-This file is used to test the implementation of a MuP parameterized model. 
+This file is used to test the implementation of a MuP parameterized model.
 We will use the same dataset as in the train.py file.
 The goal is to produce the plots from coor_check in:
 https://github.com/microsoft/mup/tree/main#checking-correctness-of-parametrization
@@ -24,7 +24,8 @@ config = parse_args(
         "lr": 1e-4,
         "weight_decay": 1e-6,
         "dropout": 0.1,
-        "mask_rate": (0.8, 0),
+        "train_mask_rate": 0.8,
+        "eval_mask_rate": 0,
         "wandb": False,
         "tags": ["test"],
         "device": "cuda:0" if torch.cuda.is_available() else "cpu",

@@ -1,0 +1,19 @@
+{
+    "d_model": [256],
+    "nhead": [2],
+    "num_decoder_mixtures": [50],
+    "batch_size" : [1024],
+    "lr": [1e-3, 3e-4],
+    "weight_decay": [0.0],
+    "dropout": [0.1, 0.05],
+    "num_emb" : ["dice","periodic"],
+    "train_mask_rate": [-1.0, 0.5],
+    "SUBSWEEP_dataset": {
+      "nuclr": {
+        "dataset" : ["nuclr"],
+        "epochs" : [50000]
+      }
+    },
+    "wandb": [1],
+    "seed": [42, 43]
+}

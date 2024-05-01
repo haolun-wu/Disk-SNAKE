@@ -1,6 +1,6 @@
 # kb-generator
 
-Disclaimer: This is very much a work in progress. The code may not be well documented or well tested. Please use at your own risk. 
+Disclaimer: This is very much a work in progress. The code may not be well documented or well tested. Please use at your own risk.
 ## Table of Contents
 - [Introduction](#introduction)
 - [Getting started](#getting-started)
@@ -15,8 +15,8 @@ Disclaimer: This is very much a work in progress. The code may not be well docum
 you might also need to install `transformers` to use huggingface's pretrained models.
 - You should also install the package using
 ```pip install -e .```
-before you start using the code. 
-- Set the `rootdir` variable in `config.py` this is the directory where data will be downloaded and saved, and where the model and various logs will be saved after training.
+before you start using the code.
+- set KBGEN_LOGDIR in your environment to where data will be downloaded and models and logs will be saved.
 - Take a quick look at `nbs/exploration_gsm.ipynb` to get a feel for the dataset and the preprocessing steps (as well as figure out how to download the data!). I'm not sure if there's a way to get around the Kaggle API but you can install the python package (in the requirements) then run `kaggle datasets download -d msainani/gsmarena-mobile-devices`" Then unzip the file and place it in the data folder (which should be `os.path.join(rootdir, "/data/gsm")`) using `unzip gsmarena-mobile-devices.zip gsm.csv`.
 
 Then, run the following command to train the model:
@@ -93,10 +93,10 @@ First, think about the problem of modeling an entity from a subset of its proper
 
 Let's look at some pseudo-code:
 
-Suppose we have an `entity_dict` that contains all the values of properties of an entity. 
-- `encode_structure(schema)` is a function that returns positional encodings aware of the tree structure of the schema. The positional encodings tell the model what property it's dealing with. 
+Suppose we have an `entity_dict` that contains all the values of properties of an entity.
+- `encode_structure(schema)` is a function that returns positional encodings aware of the tree structure of the schema. The positional encodings tell the model what property it's dealing with.
 - `entity_encoder(entity_dict)` is a function over a bag of properties it doesn't care about their order or how many there are. It returns the encoded representation of the entity. This is the encoder output in the translation task.
-- `entity_decoder(target, encoded_entity)` is a function that takes the encoded representation of an entity and decodes it into a target bag of properties. This is the decoder output in the translation task. `target`, in this case, is simply a bag of positional encodings for the properties we want to predict. 
+- `entity_decoder(target, encoded_entity)` is a function that takes the encoded representation of an entity and decodes it into a target bag of properties. This is the decoder output in the translation task. `target`, in this case, is simply a bag of positional encodings for the properties we want to predict.
 
 (N.b., note that the above encoder/decoder setup can be replaced by an encoder-only setup where we simply predict the missing properties from the encoded representation of the entity. This is what is done in the latest version of the model. This approach trades of the flexibility to decode only a subset of the properties for simplicity and speed.)
 
@@ -107,12 +107,12 @@ Here's a diagram of the the architecture:
 Now, let's look at the entity_dict for an instance of the phone entity given by the schema above:
 ```
 entity_dict = {"phone.name.model": "iPhone 12",
-"phone.name.brand": "Apple", 
-"phone.weight.value": 164, 
-"phone.weight.unit": "g", 
+"phone.name.brand": "Apple",
+"phone.weight.value": 164,
+"phone.weight.unit": "g",
 <!-- "phone.launch_date.year": 2020,  --> Suppose this line does not exist.
-"phone.launch_date.month": 10, 
-"phone.launch_date.day": 13, 
+"phone.launch_date.month": 10,
+"phone.launch_date.day": 13,
 "phone.abstract": "The iPhone 12 is a line of smartphones designed, developed, and marketed by Apple Inc. They were announced on October 13, 2020, alongside the iPhone 12 Mini and iPhone 12 Pro Max at the Steve Jobs Theater at Apple Park in Cupertino, California by Apple CEO Tim Cook, with pre-orders beginning on October 16, 2020, and shipments beginning on October 23, 2020."}
 
 ```
@@ -145,8 +145,8 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ## Trademarks
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
-trademarks or logos is subject to and must follow 
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
+trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.

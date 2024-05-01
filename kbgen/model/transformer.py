@@ -14,7 +14,7 @@ from typing import Optional, Callable, Union
 
 # Code from default implemention overwrites zero_attn which is needed for masked modeling
 # This avoids reliance on <dummy> tokens
-class TransformerEncoderLayer(Module):
+class TransformerEncoderLayer(nn.TransformerEncoderLayer):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
     This standard encoder layer is based on the paper "Attention Is All You Need".
     Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
@@ -87,8 +87,8 @@ class TransformerEncoderLayer(Module):
         device=None,
         dtype=None,
     ) -> None:
+        super().__init__(d_model, nhead, dim_feedforward, dropout, activation, layer_norm_eps, batch_first)
         factory_kwargs = {"device": device, "dtype": dtype}
-        super().__init__()
         self.self_attn = MultiheadAttention(
             d_model,
             nhead,
@@ -359,11 +359,11 @@ class TransformerEncoder(_Transformer):
             **layer_kwargs,
         )
 
-    def forward(self, src, mask=None, attention_mask=None):
+    def forward(self, src, mask=None, attention_mask=None, is_causal=False):
         # x: (batch_size, seq_len, d_model)
         # mask: (seq_len, seq_len)
         # key_padding_mask: (batch_size, seq_len)
-        output = self.model(src, mask=mask, src_key_padding_mask=attention_mask)
+        output = self.model(src, mask=mask, src_key_padding_mask=attention_mask, is_causal=is_causal)
         return output
 
 

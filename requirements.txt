@@ -1,21 +1,8 @@
-git+https://github.com/huggingface/transformers
 tqdm
 mup
 pandas
-torch
 scikit-learn
 wandb
 kaggle
 tiktoken
-
-# jax
-flax
-optax
-numpy
-tensorflow-datasets
-tqdm
-tensorflow-probability
-gin-config
-unet
-
-
+jupyter

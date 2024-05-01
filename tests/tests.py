@@ -7,7 +7,7 @@ from kbgen.model import KBFormer
 
 class TestGSM(TestCase):
     def test_from_config(self):
-        dataset = GSM.from_config(config)
+        dataset = GSM.from_config_(config)
 
 
 class testKBFormer(TestCase):
@@ -31,3 +31,24 @@ class testKBFormer(TestCase):
     def test_get_predictions(self):
         input_token_dict = self.generate_samples()
         self.model.get_predictions(input_token_dict)
+
+
+
+
+def test_padding():
+    import os
+    from kbgen.utils.log import RunTracker
+    from kbgen.config import rootdir
+    import torch
+
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    run = RunTracker.from_logdir(os.path.join(rootdir, "models/09-06-13-05-11longrundecoder-only_l4_d256"))
+    run.load_latest_model()
+    run.model.eval()
+    run.model.to(device)
+
+    out_with_pad = run.model(torch.tensor([[1, 0]]), attention_mask=torch.tensor([[0., float("-inf")]]))
+    out_wo_pad = run.model(torch.tensor([[1]]), attention_mask=torch.tensor([[0.]]))
+    assert torch.allclose(out_with_pad[0, 0], out_wo_pad[0, 0])
+
+test_padding()

@@ -20,14 +20,17 @@ class DICE(torch.nn.Module):
         self.r = r
         self.min_bound = min_bound
         self.max_bound = max_bound
-        torch.manual_seed(0)
-        M = torch.randn((self.d, self.d), dtype=torch.float64)
+        rng = torch.Generator().manual_seed(42)
+        M = torch.randn((self.d, self.d), dtype=torch.float64, generator=rng)
         # QR decomposition for orthonormal basis, Q
         Q, _ = torch.linalg.qr(M, mode="complete")
         self.register_buffer("Q", Q)
-        self.sin_powers = torch.arange(0, self.d)
+        sin = torch.arange(0, self.d)
+        self.register_buffer("sin_powers", sin, persistent=False)
         self.sin_powers[-2] = d - 1
         self.sin_powers[-1] = d - 2
+        cos = torch.ones_like(sin)
+        self.register_buffer("cos_powers", cos, persistent=False)
         self.cos_powers = torch.ones_like(self.sin_powers)
         self.cos_powers[-2] = 0
         self.Q: torch.Tensor
@@ -59,15 +62,12 @@ class Embedding(nn.Embedding):
         return x
 
 
-class DiceEmbedding(Embedding):
+class DiceEmbedding(nn.Module):
     def __init__(
         self, d_model, min_bound=-1000, max_bound=2100, r=1, affine=True
     ) -> None:
-        num_tokens = max_bound - min_bound + 1
-        super().__init__(num_tokens, d_model)
-        self._dice = DICE(
-            d_model, min_bound=min_bound, max_bound=max_bound, r=r
-        )
+        super().__init__()
+        self._dice = DICE(d_model, min_bound=min_bound, max_bound=max_bound, r=r)
         self.weight = nn.Parameter(torch.ones(1), requires_grad=affine)
         self.bias = nn.Parameter(torch.zeros(1), requires_grad=affine)
 
@@ -78,14 +78,17 @@ class DiceEmbedding(Embedding):
 
 
 class PeriodicEmbedding(nn.Embedding):
-    def __init__(self, d_model):
-        super().__init__(1, d_model)
+    def __init__(self, d_model, n_freq=4):
+        if n_freq is None:
+            n_freq = d_model
+        super().__init__(1, n_freq)
+        self.projection = nn.Linear(n_freq, d_model)
 
     def forward(self, x):
         freq = self.weight.sigmoid()
         sin = torch.sin(x.unsqueeze(-1) * freq[:, ::2])
         cos = torch.cos(x.unsqueeze(-1) * freq[:, 1::2])
-        return torch.cat([sin, cos], dim=-1)
+        return self.projection(torch.cat([sin, cos], dim=-1))
 
 
 class BinnedEmbedding(nn.Module):
@@ -105,7 +108,7 @@ class NumericEmbedding(nn.Module):
         if config["num_emb"].lower() == "dice":
             embedding = DiceEmbedding(
                 config["d_model"],
-                min_bound=1,
+                min_bound=-1,
                 max_bound=2,
                 affine=False,
             )
@@ -116,9 +119,7 @@ class NumericEmbedding(nn.Module):
                 d_model=config["d_model"],
             )
         else:
-            raise ValueError(
-                f"Unknown numerical embedding type {config['num_emb']}"
-            )
+            raise ValueError(f"Unknown numerical embedding type {config['num_emb']}")
         self.embedding = embedding
 
     def forward(self, x):
