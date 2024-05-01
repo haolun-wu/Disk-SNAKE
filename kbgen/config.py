@@ -12,7 +12,7 @@ if rootdir is None:
 
 common_defaults = {
     "dataset": "gsm",  # gsm, nuclear, homedepot
-    "d_model": 64,  # Model dimension, must be divisible by nhead
+    "d_model": 16,  # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,  # Multiplier for the inner dim in feed forward layer
     "nhead": 4,  # Number of attention heads in Entity encoder + text model if custom
     "num_layers": 2,  # Entity encoder layers for entity Encoder
@@ -68,7 +68,7 @@ defaults_hf.update(
         "tokenizer": "t5-small",
         "text_model": "t5-small",
         "freeze": False,
-        "d_model": 512,
+        "d_model": 16,
         "all_on_gpu": False,
         "use_mup": False,
     }
@@ -85,7 +85,7 @@ defaults_text.update(
 )
 
 tabddpm_config = {
-    "d_model": 64,  # Model dimension, must be divisible by nhead
+    "d_model": 16,  # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,  # Multiplier for the inner dim in feed forward layer
     "nhead": 4,  # Number of attention heads in Entity encoder + text model if custom
     "num_layers": 2,  # Entity encoder layers for entity Encoder

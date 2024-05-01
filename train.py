@@ -7,6 +7,7 @@ if __name__ == "__main__":
     # parse_args parses the command line arguments and returns a dictionary
     # the defaults for the arguments are given as a dictionary below
     # they are overwritten by the command line arguments of the same name
+    print("Start training...")
     config = parse_args(config)
 
     trainer = Trainer(config)
