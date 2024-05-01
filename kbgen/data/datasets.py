@@ -443,7 +443,8 @@ class GSM(Dataset):
         test_size = 0.2 if test_size is None else test_size
 
         # load data
-        df_path = os.path.join(path, "gsm_processed.csv")
+        # df_path = os.path.join(path, "gsm_processed.csv")
+        df_path = os.path.join(path, "gsm_processed_50.csv")
         schema_path = os.path.join(path, "gsm_schema.json")
         for p in [path, df_path, schema_path]:
             if not os.path.exists(p):

@@ -23,6 +23,10 @@ class Trainer:
         # Load all data to GPU  (because we can with most of these datasets) ----------------
         self.input_dict = self.dataset.input_dict.to(device)
         self.pad_mask_dict = self.dataset.pad_mask_dict.to(device)
+        print("input_dict:", self.input_dict.keys())
+        print("input_dict:", self.input_dict['phone.weight'])
+        print("pad_mask_dict:", self.pad_mask_dict.keys())
+        print("pad_mask_dict:", self.pad_mask_dict['phone.weight'])
 
         self.trainloader, self.testloader = self.dataset.get_loaders(config.batch_size)
         # Init model -----------------------------------------------------

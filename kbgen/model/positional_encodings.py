@@ -53,6 +53,8 @@ class Pathing(ABC, nn.Module):
         if embedding_type == "word":
             self._id_lookup = {id: node for node, id in schema_ids.items()}
             # convert idx to sequence of word ids
+            # self.words: {'person': 1, 'name': 2, 'height': 3, 'dob': 4, 'year': 5, 'month': 6, 'day': 7}
+            # self.schema_id_to_word_ids: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
             self.words = {}
             self.schema_id_to_word_ids = {}
             for id, node_path in self._id_lookup.items():
@@ -66,6 +68,15 @@ class Pathing(ABC, nn.Module):
             ]
 
             # pad the sequence of word ids
+            # paths = [
+            #     [1, 0, 0],  # person
+            #     [1, 2, 0],  # person.name
+            #     [1, 3, 0],  # person.height
+            #     [1, 4, 0],  # person.dob
+            #     [1, 4, 5],  # person.dob.year
+            #     [1, 4, 6],  # person.dob.month
+            #     [1, 4, 7],  # person.dob.day
+            # ] to tensor
             paths = pad_sequence(
                 [
                     torch.tensor(self._schema_id_to_word_ids_seq(id))
@@ -156,7 +167,7 @@ class BagPathing(Pathing):
 
 class PositionalEncoding(nn.Module):
     def __init__(
-        self, d_model, dropout=0.1, max_len=5000, random=False, trainable=False
+            self, d_model, dropout=0.1, max_len=5000, random=False, trainable=False
     ):
         """Positional encodings from Vaswani et al. 2017."""
         super().__init__()
