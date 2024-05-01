@@ -281,9 +281,6 @@ class GSM(Dataset):
                 )
         df = pd.read_csv(df_path)
         schema = json.loads(open(schema_path).read())
-        print("schema:", schema)
-        print("df:", df)
-        print("df:", df['weight'])
 
         # schema is for fields and their basic types
         types_to_nodes = schema_utils.by_types(schema)

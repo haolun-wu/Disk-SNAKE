@@ -60,6 +60,7 @@ class KBFormer(nn.Module):
 
         self.mask_embedding = nn.Embedding(len(config["fields"].all_fields), d_model)
         # Initialize Entity-level Attention Models
+        print("Check all fields:", config["fields"].all_fields)
         self.hierarchy_encoder = RNNPathing(
             config["fields"].all_fields, config["d_model"]
         )
@@ -301,6 +302,7 @@ class KBFormer(nn.Module):
             self.config["mask_rate"][int(eval_mode)],  # select masking rate
             seed=self.config["seed"] if eval_mode else None,  # fix seed for test set
         )
+        print("sampled property_mask (#batch_size, #num_fields):", property_mask.shape)
         pred_dict = self(tgt_dict, key_padding_mask, property_mask)
         losses, loss_m, loss_u, errors_m, errors_u = self.get_metrics(
             pred_dict, tgt_dict, property_mask, compute_err=eval_mode
