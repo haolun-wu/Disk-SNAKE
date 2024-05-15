@@ -14,20 +14,22 @@ from ..utils.tokenizer import (
     CustomTokenizer,
     NumericalTokenizer,
     SimpleTokenizer,
+    GPT2Tokenizer,
 )
 
 CATEGORICAL_PAD_TOKEN_ID = 0
 NUMERICAL_PAD_TOKEN_ID = -1000
 
+
 class Dataset:
     def __init__(
-        self,
-        df,
-        fields,
-        seed=0,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            df,
+            fields,
+            seed=0,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ) -> None:
         self.value_to_type = {0: "numerical", 1: "categorical", 2: "text"}
         self._df = df
@@ -63,9 +65,9 @@ class Dataset:
         )
 
     def _from_path(
-        self,
-        path,
-        prefix,
+            self,
+            path,
+            prefix,
     ):
         # initialize arguments
         self.path = path
@@ -125,8 +127,8 @@ class Dataset:
                     "num_numerical_features": len(dataset.fields["numerical"]),
                     "num_category_classes": {i: v for i, v in enumerate(dataset.categorical_num_classes.values())},
                     "is_y_cond": 0,
-                    "num_classes": 0, 
-                    
+                    "num_classes": 0,
+
                 }
             )
         return dataset
@@ -135,8 +137,8 @@ class Dataset:
         self.df.fillna("", inplace=True)  # previously was "<pad>" TODO
         # convert cat and text columns to strings
         self.df.loc[:, self.fields["text"]] = self.df.loc[
-            :, self.fields["text"]
-        ].astype(str)
+                                              :, self.fields["text"]
+                                              ].astype(str)
 
         # TODO: Connect Numerical tokens in categorical fields to numerical embeddings
         if tokenizer == "custom":
@@ -147,13 +149,15 @@ class Dataset:
             self.tokenizer = Tokenizer.from_pretrained(tokenizer)
         elif tokenizer == "simple":
             self.tokenizer = SimpleTokenizer(" ".join(self.as_strings()))
+        elif tokenizer == "gpt2":
+            self.tokenizer = GPT2Tokenizer()
         else:
             raise NotImplementedError
 
         self.numerical_tokenizer = NumericalTokenizer(self.numerical_pad_token_id)
 
         assert (
-            self.pad_token == self.tokenizer.pad_token
+                self.pad_token == self.tokenizer.pad_token
         ), f"Pad token {self.pad_token} does not match tokenizer {self.tokenizer.pad_token}"
         assert self.categorical_pad_token_id == self.tokenizer.pad_token_id, (
             f"Categorical pad token {self.categorical_pad_token_id} does not "
@@ -176,11 +180,11 @@ class Dataset:
             return input_dict, pad_mask_dict
 
     def df_tokenize(
-        self,
-        df,
-        fields,
-        text_tokenizer,
-        numerical_tokenizer,
+            self,
+            df,
+            fields,
+            text_tokenizer,
+            numerical_tokenizer,
     ):
         """Method to convert a dataframe to a tensor ready for training. Each field
           is tokenized and converted to a tensor of integers.
@@ -212,7 +216,8 @@ class Dataset:
                 attention_mask_dict[field] = am
             elif field in fields["categorical"]:
                 # get set of values and map to integers
-                am = df[field] == self.categorical_pad_token_id # get mask of null values (is this right? pad token id is 0)
+                am = df[
+                         field] == self.categorical_pad_token_id  # get mask of null values (is this right? pad token id is 0)
                 am = torch.tensor(am.values, dtype=torch.bool)
                 tensor_dict[field] = torch.tensor(df[field].values)
                 attention_mask_dict[field] = am.to(dtype).masked_fill_(am, -torch.inf)
@@ -231,7 +236,7 @@ class Dataset:
 
         self.df.loc[:, self.fields["numerical"]] -= self._numerical_min
         self.df.loc[:, self.fields["numerical"]] /= (
-            self._numerical_max - self._numerical_min + 1e-10
+                self._numerical_max - self._numerical_min + 1e-10
         )
         return self.df
 
@@ -256,7 +261,6 @@ class Dataset:
         min_ = self._numerical_min[field]
         return tensor * (max_ - min_) + min_
 
-
     def decode(self, seq):
         return self.tokenizer.decode(seq)
 
@@ -264,9 +268,9 @@ class Dataset:
         return len(self.df)
 
     def get_loaders(
-        self,
-        batch_size: Optional[Union[int, Tuple[int, int]]] = None,
-        shuffle: bool = True,
+            self,
+            batch_size: Optional[Union[int, Tuple[int, int]]] = None,
+            shuffle: bool = True,
     ):
         if batch_size is None:
             batch_size = (len(self.train_idx), len(self.val_idx))
@@ -428,12 +432,12 @@ class Dataset:
 
 class GSM(Dataset):
     def __init__(
-        self,
-        path=None,
-        seed=42,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            path=None,
+            seed=42,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ):
         print("warning, data seed is hardcoded to 42")
         # initialize arguments
@@ -478,7 +482,6 @@ class GSM(Dataset):
         )
         self.train_idx, self.val_idx = self.remove_similar(self.train_idx, self.val_idx)
 
-
     def remove_similar(self, train_idx, val_idx):
         train_df = self._df.iloc[train_idx]
         test_df = self._df.iloc[val_idx]
@@ -494,11 +497,11 @@ class GSM(Dataset):
 
 class DataLoader:
     def __init__(
-        self,
-        *tensor: MutableSequence,
-        batch_size: int,
-        shuffle: bool = False,
-        seed=0,
+            self,
+            *tensor: MutableSequence,
+            batch_size: int,
+            shuffle: bool = False,
+            seed=0,
     ):
         self.tensor = tensor
         self.batch_size = batch_size
@@ -520,7 +523,7 @@ class DataLoader:
         for t in self.tensor:
             assert len(t) == len(self.tensor[0])
 
-        batch = tuple(t[self.i : self.i + self.batch_size] for t in self.tensor)
+        batch = tuple(t[self.i: self.i + self.batch_size] for t in self.tensor)
         self.i += self.batch_size
         return batch
 
@@ -534,12 +537,12 @@ class DataLoader:
 
 class HomeDepot(Dataset):
     def __init__(
-        self,
-        path=None,
-        seed=0,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            path=None,
+            seed=0,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ):
         path = os.path.join(rootdir, "data/homedepot") if path is None else path
         df = self._from_path(path, "homedepot")
@@ -548,31 +551,33 @@ class HomeDepot(Dataset):
 
 class NUCLEAR(Dataset):
     def __init__(
-        self,
-        path=None,
-        seed=0,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            path=None,
+            seed=0,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ):
         path = os.path.join(rootdir, "data/nuclear") if path is None else path
         df = self._from_path(path, "nuclear")
         df["z_cat"] = df["z"]
         df["n_cat"] = df["n"]
-        self.fields["numerical"] = ['z', 'n', 'binding_semf', 'radius', 'half_life_sec', 'spin', 'abundance', 'qa', 'qbm', 'qbm_n', 'qec', 'electric_quadrupole', 'volume', 'surface', 'symmetry', 'coulomb']
+        self.fields["numerical"] = ['z', 'n', 'binding_semf', 'radius', 'half_life_sec', 'spin', 'abundance', 'qa',
+                                    'qbm', 'qbm_n', 'qec', 'electric_quadrupole', 'volume', 'surface', 'symmetry',
+                                    'coulomb']
         self.fields["categorical"] = ["parity", "stability", "z_cat", "n_cat"]
-        #self.fields["categorical"] += ["z_cat", "n_cat"]
+        # self.fields["categorical"] += ["z_cat", "n_cat"]
         super().__init__(df, self.fields, seed, test_size, tokenizer, numerical_tokenizer)
 
 
 class Gaussians(Dataset):
     def __init__(
-        self,
-        path=None,
-        seed=0,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            path=None,
+            seed=0,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ):
         if path is None:
             self.path = os.path.join(rootdir, "data/gaussians")
@@ -587,14 +592,15 @@ class Gaussians(Dataset):
         self.fields = Fields({"numerical": ["x", "y", "z"], "categorical": [], "text": []})
         super().__init__(df, self.fields, seed, test_size, tokenizer, numerical_tokenizer)
 
+
 class TwoMoons(Dataset):
     def __init__(
-        self,
-        path=None,
-        seed=0,
-        test_size=0.2,
-        tokenizer=None,
-        numerical_tokenizer=None,
+            self,
+            path=None,
+            seed=0,
+            test_size=0.2,
+            tokenizer=None,
+            numerical_tokenizer=None,
     ):
         from sklearn.datasets import make_moons
         if path is None:
@@ -606,12 +612,13 @@ class TwoMoons(Dataset):
         n_samples = 1000
         x, y = make_moons(n_samples=n_samples, noise=0.0, random_state=seed)
         # x = x.round(2)
-        df = pd.DataFrame({"x": x[:,0].tolist(), "y": x[:,1].tolist(), "label": y.astype(float).tolist()})
+        df = pd.DataFrame({"x": x[:, 0].tolist(), "y": x[:, 1].tolist(), "label": y.astype(float).tolist()})
         self.fields = Fields({"numerical": ["x", "y", ], "categorical": ["label"], "text": []})
         super().__init__(df, self.fields, seed, test_size, tokenizer, numerical_tokenizer)
 
 
 def load_dataset(config):
+    print("config:", config)
     if config["dataset"] == "gsm":
         return GSM.from_config_(config)
     elif config["dataset"] == "homedepot":

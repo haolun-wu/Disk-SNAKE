@@ -1,6 +1,6 @@
 import os
 
-rootdir = os.environ.get("KBGEN_LOGDIR", None)
+rootdir = os.environ.get("KBGEN_LOGDIR", 'logdir')
 if rootdir is None:
     raise ValueError(
         "Please set the KBGEN_LOGDIR environment variable "
@@ -56,7 +56,7 @@ defaults_customLM.update(
         "text_decoder_layers": 2,  # number of layers for text decoders
         "text_encoder_layers": 2,  # number of layers for text encoders
         "encoder_readout": "none",  # use an LM readout layer on the encoder (none, tied, separate)
-        "use_mup": 1,  # use mup scaling in the model architecture
+        "use_mup": 0,  # use mup scaling in the model architecture
     }
 )
 
@@ -117,6 +117,6 @@ tabddpm_config = {
     "log_params": 0,  # Log model parameters and gradients to wandb
     "float_precision": "float32",  # float32, float16, float64
     "never_mask": [],  # Properties that are never masked
-    "use_mup": 1,  # use mup scaling in the model architecture
+    "use_mup": 0,  # use mup scaling in the model architecture
     "tokenizer": "custom",
 }

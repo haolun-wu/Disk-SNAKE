@@ -433,6 +433,11 @@ class KBFormer(nn.Module):
     def to_tensor_dict(self, tensor):
         if isinstance(tensor, TensorDict):
             # TODO nan_to_num, this exists only for backward compatibility
+            print("Config fields:", self.config["fields"].all_fields)
+            print("Tensor fields:", tensor.fields.all_fields)
+            print("Length of Config fields:", len(self.config["fields"].all_fields))
+            print("Length of Tensor fields:", len(tensor.fields.all_fields))
+
             # rename all keys
             tensor_dict = TensorDict(
                 {
@@ -440,7 +445,7 @@ class KBFormer(nn.Module):
                     for idx, field in enumerate(tensor.fields.all_fields)
                 },
                 fields=self.config["fields"],
-            ) 
+            )
             return tensor_dict
         tensor_dict = TensorDict(fields=self.config["fields"])
         for idx, field in enumerate(self.config["fields"].all_fields):

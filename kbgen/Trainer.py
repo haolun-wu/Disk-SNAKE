@@ -66,7 +66,14 @@ class Trainer:
             self.model.train()
             for (batch,) in self.trainloader:
                 self.optimizer.zero_grad()
-                output = self.model.apply(
+                # output = self.model.apply(
+                #     *trim_padding_(
+                #         self.input_dict.iloc(batch),
+                #         self.pad_mask_dict.iloc(batch),
+                #         self.config,
+                #     )
+                # )
+                output = self.model(
                     *trim_padding_(
                         self.input_dict.iloc(batch),
                         self.pad_mask_dict.iloc(batch),
