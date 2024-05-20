@@ -53,8 +53,6 @@ class Pathing(ABC, nn.Module):
         if embedding_type == "word":
             self._id_lookup = {id: node for node, id in schema_ids.items()}
             # convert idx to sequence of word ids
-            # self.words: {'person': 1, 'name': 2, 'height': 3, 'dob': 4, 'year': 5, 'month': 6, 'day': 7}
-            # self.schema_id_to_word_ids: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
             self.words = {}
             self.schema_id_to_word_ids = {}
             for id, node_path in self._id_lookup.items():
@@ -68,15 +66,6 @@ class Pathing(ABC, nn.Module):
             ]
 
             # pad the sequence of word ids
-            # paths = [
-            #     [1, 0, 0],  # person
-            #     [1, 2, 0],  # person.name
-            #     [1, 3, 0],  # person.height
-            #     [1, 4, 0],  # person.dob
-            #     [1, 4, 5],  # person.dob.year
-            #     [1, 4, 6],  # person.dob.month
-            #     [1, 4, 7],  # person.dob.day
-            # ] to tensor
             paths = pad_sequence(
                 [
                     torch.tensor(self._schema_id_to_word_ids_seq(id))
@@ -84,11 +73,12 @@ class Pathing(ABC, nn.Module):
                 ],
                 batch_first=True,
             )
-
             self.register_buffer("paths", paths)
             self.register_buffer("blank_x", torch.zeros(1, len(paths), d_model))
         elif embedding_type == "node":
             self.words = schema_ids
+            paths = torch.tensor(list(schema_ids.values())).unsqueeze(0)
+            self.register_buffer("paths", paths)
             self.register_buffer("blank_x", torch.zeros(1, len(self.words), d_model))
         else:
             raise ValueError("embedding_type must be either 'word' or 'node'")
@@ -104,29 +94,12 @@ class Pathing(ABC, nn.Module):
         pass
 
 
-class IndepedentPathing(Pathing):
-    def __init__(self, schema: dict, d_model: int):
-        """Each leaf node in the tree has its own positional encoding that
-        is independent of the path from the root to the node or the semantic
-        content of the path. See the parent class Pathing for more details.
-
-        Args:
-            schema (dict): dictionary representing the schema of the dataset. 
-                See Pathing for more details.
-            d_model (int): The dimension of the embeddings.
-        """
-        super().__init__(schema, d_model)
-
-    def forward(self, x):
-        return self.embeddings(x)
-
-
 class RNNPathing(Pathing):
     def __init__(self, schema, d_model):
         """Positional encodings based on the path from the root to the node.
         The positional encoding of a node is the last hidden state of an RNN
         that encodes the path from the root to the node.
-        
+
         Usage:
             ```
             rnn_pathing_pe = RNNPathing(schema_ids, d_model)
@@ -136,25 +109,28 @@ class RNNPathing(Pathing):
                  person.height: 2,
                 }
             x = torch.tensor(schema_ids.keys())
-             
+
             pe = rnn_pathing_pe(x) # returns the positional encodings for the nodes in x
             pe.shape # (3, d_model)
             # the RNN processes each node in the path in sequence
             ```
-            
+
         Args:
-            schema (dict): dictionary representing the schema of the dataset. 
+            schema (dict): dictionary representing the schema of the dataset.
                 See Pathing for more details.
             d_model (int): The dimension of the embeddings.
-        """        
+        """
         super().__init__(schema, d_model, embedding_type="word")
         # simple rnn to encode the paths
         self.rnn = nn.RNN(d_model, d_model, batch_first=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # self.paths is a tensor of shape (num_paths, seq_len)
         out, last = self.rnn(self.embeddings(self.paths))
+        # last is a tensor of shape (num_layers, num_paths, d_model)
+        # out is a tensor of shape (num_paths, seq_len, d_model)
         # we will use the last hidden state of the rnn as the positional encoding
-        return x * self.scale + last[: x.shape[1], :]
+        return x * self.scale + last[[-1]]
 
 
 class BagPathing(Pathing):
@@ -164,7 +140,7 @@ class BagPathing(Pathing):
         constructed by summing the embeddings of the nodes in the path.
 
         Args:
-            schema (dict): dictionary representing the schema of the dataset. 
+            schema (dict): dictionary representing the schema of the dataset.
                 See Pathing for more details.
             d_model (int): The dimension of the embeddings.
         """
@@ -179,7 +155,9 @@ class BagPathing(Pathing):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000, random=False):
+    def __init__(
+        self, d_model, dropout=0.1, max_len=5000, random=False, trainable=False
+    ):
         """Positional encodings from Vaswani et al. 2017."""
         super().__init__()
         self.d_model = d_model
@@ -196,8 +174,8 @@ class PositionalEncoding(nn.Module):
         self.pe[:, 1::2] = torch.cos(position * div_term)
         self.random = random
 
-        self.pe = nn.Parameter(self.pe, requires_grad=False)
-        self.scale = nn.Parameter(self.scale, requires_grad=False)
+        self.pe = nn.Parameter(self.pe, requires_grad=trainable)
+        self.scale = nn.Parameter(self.scale, requires_grad=trainable)
 
     def forward(self, x):
         if self.random:

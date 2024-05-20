@@ -1,0 +1,18 @@
+{
+    "d_model": [32, 64, 128, 256, 512],
+    "nhead": [4],
+    "batch_size" : [1024],
+    "lr": [3e-4, 1e-4],
+    "weight_decay": [1e-3, 0.0],
+    "dropout": [0.0, 0.1],
+    "num_emb" : ["dice"],
+    "SUBSWEEP_dataset": {
+      "nuclr": {
+        "dataset" : ["nuclr"],
+        "epochs" : [50000]
+      }
+    },
+    "wandb": [1],
+    "seed": [42],
+    "use_mup": [1]
+}

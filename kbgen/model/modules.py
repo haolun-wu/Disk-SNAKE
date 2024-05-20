@@ -6,7 +6,7 @@ from .positional_encodings import PositionalEncoding
 from .transformer import TransformerDecoder, TransformerEncoder
 from ..utils import shift_right
 from .embeddings import NumericEmbedding
-
+from functools import cache
 
 class ModuleDict(nn.ModuleDict):
     def __setitem__(self, key: str, module: nn.Module) -> None:
@@ -42,7 +42,7 @@ class _ResBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.act = nn.GLU()
-        # self.layer_norm = RMSNorm(self.d_model)
+        #self.layer_norm = RMSNorm(self.d_model)
 
     def forward(self, x):
         residual = x
@@ -59,11 +59,12 @@ class DecoderModule(nn.Module):
         self,
         config: dict,
         readout_dim: int,
-        embedding: Optional[torch.Tensor] = None,
         numerical: bool = False,
     ) -> None:
         super().__init__()
         self.numerical = numerical
+        if numerical:
+            readout_dim = readout_dim * 3 # for the mean and std and weights
         d_model, d_ff, dropout = (
             config["d_model"],
             config["d_ff_mult"] * config["d_model"],
@@ -76,24 +77,65 @@ class DecoderModule(nn.Module):
                 for _ in range(config["field_decoder_layers"])
             ]
         )
-        if embedding is not None:
-            if config["use_mup"]:
-                self.readout = MuSharedReadout(embedding, bias=False)
-            else:
-                self.readout = nn.Linear(d_model, readout_dim, bias=False)
-                self.readout.weight = embedding
+        if config["use_mup"]:
+            self.readout = MuReadout(d_model, readout_dim)
         else:
-            if config["use_mup"]:
-                self.readout = MuReadout(d_model, readout_dim)
-            else:
-                self.readout = nn.Linear(d_model, readout_dim)
+            self.readout = nn.Linear(d_model, readout_dim)
 
     def forward(self, x):
         x = self.decoder(x)
         x = self.readout(x)
-        if self.numerical:
-            return x.sigmoid() + 1
         return x
+
+
+class MOEDecoderModule(nn.Module):
+    def __init__(
+        self,
+        config: dict,
+        readout_dim: int,
+    ) -> None:
+        """
+        This defines a mixture of experts decoder module that is supposed to handle all categories across all categorical fields.
+        """
+        super().__init__()
+        d_model, d_ff, dropout, num_experts = (
+            config["d_model"],
+            config["d_ff_mult"] * config["d_model"],
+            config["dropout"],
+            config["num_categorical_decoder_experts"],
+        )
+        self.experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    *[
+                        _ResBlock(d_model, dropout, d_ff)
+                        for _ in range(config["field_decoder_layers"])
+                    ]
+                )
+                for _ in range(num_experts)
+            ]
+        )
+
+        if config["use_mup"]:
+            self.mixture = MuReadout(d_model, num_experts)
+            self.readout = MuReadout(d_model, readout_dim)
+        else:
+            self.mixture = nn.Linear(d_model, num_experts)
+            self.readout = nn.Linear(d_model, readout_dim)
+
+    def forward(self, x, query=None):  # query is usually the categorical field name
+        if query is None:
+            # in case we don't have a query, the MOE should take X itself as an input
+            query = x
+        else:
+            pass # TODO should query be added to x perhaps?a
+
+        mixture = torch.softmax(self.mixture(query), dim=-1)
+
+        output = torch.zeros_like(x)
+        for i, expert in enumerate(self.experts):
+            output += expert(x) * mixture[:, [i]]
+        return self.readout(output)
 
 
 class EncoderModule(nn.Module):
@@ -134,15 +176,19 @@ class NumericalEncoder(nn.Module):
 
 
 class CategoricalEncoder(nn.Module):
-    def __init__(self, config, embedding) -> None:
+    def __init__(self, config, embedding = None, vocab_size = None) -> None:
         super().__init__()
-        self.embedding = embedding
+        # make new embedding
+        if embedding is not None:
+          self.embedding = embedding
+        else:
+          assert vocab_size is not None
+          self.embedding = nn.Embedding(vocab_size, config["d_model"])
         self.encoder = EncoderModule(config)
-        self.pe = PositionalEncoding(config["d_model"], config["dropout"])
 
     def forward(self, x):
         x = self.embedding(x)
-        x = self.encoder(self.pe(x)).mean(dim=1)
+        x = self.encoder(x)
         return x
 
 
@@ -178,10 +224,9 @@ class TextModule(nn.Module):
             self.input_embedding = nn.Embedding(
                 config["vocab_size"],
                 config["d_model"],
-                # sparse=config["sparse_embeddings"],
             )
             self.pe = PositionalEncoding(
-                config["d_model"], config["dropout"], max_len=256
+                config["d_model"], config["dropout"], max_len=2048
             )
             self.encoder = TextEncoder(
                 config,
@@ -233,7 +278,7 @@ class TextModule(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    def __init__(self, config, num_layers=None, embedding=None, pe=None):
+    def __init__(self, config, num_layers=None, embedding=None, pe=None, pe_len=None):
         super().__init__()
         if num_layers is None:
             num_layers = config["num_layers"]
@@ -241,7 +286,7 @@ class TextEncoder(nn.Module):
             d_model=config["d_model"],
             dropout=config["dropout"],
             nhead=config["nhead"],
-            dim_feedforward=config["d_model"] * 1,
+            dim_feedforward=config["d_model"] * ["d_ff_mult"],
             num_layers=num_layers,
         )
         self.positional_encoding = (
@@ -250,6 +295,7 @@ class TextEncoder(nn.Module):
             else PositionalEncoding(
                 config["d_model"],
                 config["dropout"],
+                max_len=pe_len,
             )
         )
         self.embedding = (
@@ -261,18 +307,76 @@ class TextEncoder(nn.Module):
             )
         )
 
+        if config["encoder_readout"] == "tied":
+            self.readout = LMHead(config, self.embedding)
+        elif config["encoder_readout"] == "separate":
+            self.readout = LMHead(config)
+        elif config["encoder_readout"] == "none":
+            self.readout = lambda x: x
+        else:
+            raise NotImplementedError
+
+        self._zero_pad(config["categorical_pad_token_id"])
+
+    def _zero_pad(self, pad_token_id):
+        self.embedding.weight.data[pad_token_id] = 0
+
+    def _shift_right(self, input_ids, inplace=False):
+        return shift_right(input_ids, inplace=inplace)
+
+    def _causal_mask_like(self, x):
+        @cache
+        def cached_call(sz, device):
+            return torch.nn.Transformer.generate_square_subsequent_mask(sz, device)
+        return cached_call(x.shape[1], x.device)
+
+    def encode(
+        self, x, attention_mask=None, padding_mask=None, is_causal=False, shift_right=False
+    ):
+        """Encode a sequence of tokens.
+        Args:
+            x (Tensor): Input tokens of shape (batch_size, seq_len).
+            attention_mask (Tensor, optional): Square mask of shape (seq_len, seq_len). Defaults to None.
+            padding_mask (Tensor, optional): Padding mask of shape (batch_size, seq_len).
+                Used for key masking. Defaults to None.
+            is_causal (bool, optional): Whether to use a causal mask. This would override the mask
+                argument when True. Defaults to False.
+            shift_right (bool, optional): Whether to shift the input sequence to the right by one.
+                The first token is set to 0. Defaults to False.
+
+        Returns:
+            Tensor: Encoded sequence of shape (batch_size, seq_len, d_output). d_output is either
+                d_model or vocab_size depending on the readout layer.
+        """
+        if is_causal:
+            if attention_mask is not None:
+                raise ValueError("Cannot use both attention_mask and is_causal")
+            attention_mask = self._causal_mask_like(x)
+        if shift_right:
+            x = self._shift_right(x)
+            if padding_mask is not None:
+                padding_mask = self._shift_right(padding_mask)
+            if not is_causal and attention_mask is not None:
+                raise NotImplementedError()
+
+        x = self(x, attention_mask, padding_mask, is_causal=is_causal)
+        x = self.readout(x)
+        return x
+
     def forward(
         self,
         src,
-        mask=None,
         attention_mask=None,
+        padding_mask=None,
+        is_causal=False,
     ):
         src = self.embedding(src)
         src = self.positional_encoding(src)
         src = self.encoder(
             src,
-            mask,
             attention_mask,
+            padding_mask,
+            is_causal=is_causal,
         )
         return src
 

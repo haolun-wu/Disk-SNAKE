@@ -3,6 +3,7 @@ import pandas as pd
 from typing import Callable, Dict, Literal, Optional, TypeVar
 from functools import cached_property
 from collections import OrderedDict
+from dataclasses import dataclass
 
 
 def random_mask(*shape, mask_rate=0.8, device=None, seed=None):
@@ -19,98 +20,6 @@ def random_mask(*shape, mask_rate=0.8, device=None, seed=None):
         g = torch.Generator().manual_seed(seed) if seed is not None else None
         mask.masked_fill_(torch.rand(*shape, generator=g) < mask_rate, -torch.inf)
         mask = mask.to(device)
-    return mask
-
-
-def df_tokenize(
-    df,
-    fields,
-    categorical_tokenizer,
-    numerical_tokenizer,
-):
-    """Method to convert a dataframe to a tensor ready for training. Each field
-       is tokenized and converted to a tensor of integers.
-
-    Args:
-        df (pd.Dataframe): Dataframe containing the data to be converted
-
-    Returns:
-        torch.Tensor: Tensor containing the data
-    """
-    tensor_dict = OrderedDict()
-    attention_mask_dict = OrderedDict()
-    dtype = torch.get_default_dtype()
-    for field in fields.all_fields:
-        if field in fields["text"] or field in fields["categorical"]:
-            # TODO add dtype support
-            # need to change all this to bool
-            text = df[field].values.tolist()
-            text = categorical_tokenizer(text, padding=True)
-            tensor = text["input_ids"]
-            am = text["attention_mask"]  # comes in as 1/0 int tensor
-            # 1 -> 0, 0 -> -inf
-            tensor_dict[field] = (
-                tensor if isinstance(tensor, torch.Tensor) else torch.tensor(tensor)
-            )
-            am = am if isinstance(am, torch.Tensor) else torch.tensor(am)
-            am = am.bool().logical_not_()
-            attention_mask_dict[field] = am.to(dtype).masked_fill_(am, -torch.inf)
-
-        elif field in fields["numerical"]:
-            numbers = numerical_tokenizer(df[field].values, dtype=torch.float)
-            tensor_dict[field] = numbers
-            am = numbers == numerical_tokenizer.pad_token
-            attention_mask_dict[field] = am.to(dtype).masked_fill_(am, -torch.inf)
-    return TensorDict(tensor_dict, fields=fields), TensorDict(
-        attention_mask_dict, fields=fields
-    )
-
-
-def date_to_int_tensor(date):
-    if pd.isnull(date) or date.startswith("http"):
-        return -1000 * torch.ones(3, dtype=torch.int64)
-    year, month, day = date.split("T")[0].split("-")[-3:]
-    year = -int(year) if date.startswith("-") else int(year)
-    return torch.tensor([int(year), int(month), int(day)], dtype=torch.int64)
-
-
-def get_key_padding_mask(sequence_dict, pad_token=0):
-    # TODO this is broken
-    """Returns a mask for the encoder self-attention layer.
-    The mask is True (hidden) for all positions corresponding
-    to the padding tokens.
-
-    Args:
-        sequence_dict (dict): A dictionary of sequences of tokens
-        pad_token (int, optional): The padding token. Defaults to 0.
-
-    Returns:
-        torch.float32: (batch_size, seq_len) mask with True (0) for all
-        non-padding tokens and False (-inf) for all padding tokens
-    """
-    mask = {
-        field: _get_key_padding_for_sequence(sequence, pad_token)
-        for field, sequence in sequence_dict.items()
-    }
-    return TensorDict(mask)
-
-
-def _get_key_padding_for_sequence(sequence, pad_token=0):
-    """Returns a mask for the encoder self-attention layer.
-    The mask is True (hidden) for all positions corresponding
-    to the padding tokens.
-
-    Args:
-        sequence (torch.LongTensor): The sequence of tokens
-        pad_token (int, optional): The padding token. Defaults to 0.
-
-    Returns:
-        torch.float32: (batch_size, seq_len) mask with True (0) for all
-        non-padding tokens and False (-inf) for all padding tokens
-    """
-    seq = sequence == pad_token
-    mask = torch.zeros_like(seq, dtype=torch.get_default_dtype())
-    mask[seq] = -torch.inf
     return mask
 
 
@@ -207,12 +116,12 @@ class TensorDict(dict):
             {field: tensor.float() for field, tensor in self.items()},
             fields=self.fields,
         )
-    
+
     def float_(self):
         for field in self:
             self[field] = self[field].float()
         return self
-    
+
     def bool(self):
         return TensorDict(
             {field: tensor.bool() for field, tensor in self.items()},
@@ -283,12 +192,21 @@ class iloc:
                 fields=self.data.fields,
             )
 
+    def __setitem__(self, idx, tensordict):
+        if isinstance(idx, tuple):
+            key = idx[0]
+            indices = idx[1]
+            self.data[key][indices] = tensordict[key]
+        else:
+            for key in self.data:
+                self.data[key][idx] = tensordict[key]
+
     def __call__(self, idx):
         return self[idx]
 
 
 class Fields(OrderedDict):
-    @cached_property
+    @property
     def all_fields(self):
         all_fields = []
         for field_values in self.values():
@@ -302,18 +220,23 @@ class Fields(OrderedDict):
         raise ValueError(f"{field} not found in any field type")
 
 
-def reduce_by_mask(losses, mask):
-    if len(losses) == 0:
-        return (torch.tensor([]),) * 3
+def reduce_by_mask(losses, mask, token_mask=None):
+    # careful:
+    # this assumes that mask comes as True for things that are masked out (or float -inf)
+    # and token_mask has the inverse logic (False for padding tokens)
+    assert losses.ndim == 1 and mask.ndim == 1, "Reduce only accepts vectors"
     # p_mask comes in as -inf tensor
     # convert to bool
-    if mask.dtype == torch.float32:
+    if torch.is_floating_point(mask):
         mask = mask.bool()
+    if token_mask is None:
+        token_mask = torch.ones_like(mask, device=mask.device).bool()
+
+    assert token_mask.ndim == 1, "Token mask should be flat"
+    if len(losses) == 0 or not token_mask.any():
+        return torch.tensor([], device=mask.device)
     mask = mask.repeat_interleave(len(losses) // len(mask))
-    masked = losses[mask].mean()
-    unmasked = losses[~mask].mean()
-    total = losses.mean()
-    return masked, unmasked, total
+    return losses[mask & token_mask].mean()
 
 
 def shift_right(input_ids, inplace=True):
@@ -342,8 +265,6 @@ T = TypeVar("T", bound=torch.nn.Module)
 def setup_mup_shapes(
     model_callable: Callable[..., T], width_arguments: Dict, config: Dict
 ):
-    from mup import make_base_shapes
-
     base_config = config.copy()
     for key, value in width_arguments.items():
         base_config[key] = value
@@ -352,7 +273,7 @@ def setup_mup_shapes(
         base_config[key] = value * 2
     delta_model = model_callable(base_config)
 
-    make_base_shapes(base_model, delta_model, "/tmp/mup_shapes.bsh")
+    return base_model, delta_model
 
 
 def mup_model(
@@ -360,9 +281,9 @@ def mup_model(
 ) -> T:
     from mup import set_base_shapes
 
-    setup_mup_shapes(model_callable, width_arguments, config)
+    base_model, delta_model = setup_mup_shapes(model_callable, width_arguments, config)
     model = model_callable(config)
-    return set_base_shapes(model, "/tmp/mup_shapes.bsh")
+    return set_base_shapes(model, base_model, delta=delta_model)
 
 
 def convert_mask_to_float(mask: torch.Tensor) -> torch.Tensor:
@@ -387,8 +308,11 @@ def is_missing(
         property_type (str): Literal["categorical", "text", "numerical"]. The
             type of property to check.
     """
-    if property_type == "categorical" or property_type == "text":
-        assert padding_mask.ndim > 1
+    if property_type == "categorical":
+        mask = padding_mask.isinf().view(-1)
+    elif property_type == "text":
+        # FIXME assumes that the first token is always valid
+        # masked out value = eos followed by pads
         mask = padding_mask[:, 1:].all(-1)
     elif property_type == "numerical":
         assert padding_mask.ndim == 1
@@ -403,3 +327,22 @@ def like(src, tgt):
     """make src like tgt"""
     dtype, device, shape = tgt.dtype, tgt.device, tgt.shape
     return src.to(dtype=dtype, device=device).view(*shape)
+
+
+def trim_padding_(i, p, config):
+    # for each key
+    for key in config.fields["text"]:
+        until = (~p[key].bool()).sum(dim=1).max()
+        i[key] = i[key][:, :until].contiguous()
+        p[key] = p[key][:, :until].contiguous()
+    return i, p
+
+
+@dataclass
+class ModelOutputs:
+    preds: TensorDict
+    targets: TensorDict
+    property_mask: torch.Tensor
+    loss: torch.Tensor
+    loss_dict: TensorDict
+    error_dict: TensorDict
