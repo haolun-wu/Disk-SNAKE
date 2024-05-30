@@ -312,10 +312,10 @@ class KBFormer(nn.Module):
                     continue
 
                 # Select masked samples and targets based on masked positions
-                masked_pred = sample[masked_positions]  # (num_masks, seq_len, d_model)
+                masked_preds = sample[masked_positions]  # (num_masks, seq_len, d_model)
                 masked_targets = target[masked_positions]  # (num_masks, seq_len)
 
-                min_losses = compute_min_ce_loss(masked_pred, masked_targets)
+                min_losses = compute_min_ce_loss(masked_preds, masked_targets)
                 loss[field] = min_losses.mean()
 
         return loss
