@@ -497,7 +497,7 @@ class KBFormer(nn.Module):
                 pass
         return property_mask
 
-    """OTHERS"""
+    """OTHERS for eval"""
 
     def generate_text_autoregressive(self, condition, temp=0.0, max_len=20):
         # make initial input
@@ -528,31 +528,6 @@ class KBFormer(nn.Module):
             #     break
 
         return current_input[:, 1:]
-
-    def sample_with_temp(
-        self,
-        prob_params,
-        target_dict=None,
-        key_padding_mask=None,
-        temp=0.0,
-        teacher_forcing=True,
-    ):
-        new_samples = TensorDict(fields=self.config["fields"])
-        for field in self.config["fields"].all_fields:
-            if field in self.config["fields"]["text"]:
-                new_samples[field] = self._sample_field_with_temp(
-                    prob_params[field],
-                    temp,
-                    field,
-                    target_dict[field] if target_dict is not None else None,
-                    key_padding_mask[field] if key_padding_mask is not None else None,
-                    teacher_forcing,
-                )
-            else:
-                new_samples[field] = self._sample_field_with_temp(
-                    prob_params[field], temp, field, teacher_forcing=teacher_forcing
-                )
-        return new_samples
 
     def _sample_field_with_temp(
         self,
@@ -589,27 +564,32 @@ class KBFormer(nn.Module):
                     decisions = torch.multinomial(proba, 1)
                     return decisions.view(shape[:-1])
 
-    def _get_samples(
-        self,
-        input_dict: TensorDict,
-        key_padding_mask: Optional[TensorDict] = None,
-        property_mask: Optional[TensorDict] = None,
-        temperature: Optional[float] = 0.0,
-        teacher_forcing: bool = True,
-        use_path_emb: bool = True,
-    ) -> TensorDict:
-        params = self.get_probabilistic_params(
-            input_dict, key_padding_mask, property_mask, use_path_emb
-        )
+    """Only used for GMM"""
 
-        # now get actual predicted samples
-        return self.sample_with_temp(
-            params,
-            input_dict,
-            key_padding_mask,
-            temp=temperature,
-            teacher_forcing=teacher_forcing,
-        )
+    def sample_with_temp(
+        self,
+        prob_params,
+        target_dict=None,
+        key_padding_mask=None,
+        temp=0.0,
+        teacher_forcing=True,
+    ):
+        new_samples = TensorDict(fields=self.config["fields"])
+        for field in self.config["fields"].all_fields:
+            if field in self.config["fields"]["text"]:
+                new_samples[field] = self._sample_field_with_temp(
+                    prob_params[field],
+                    temp,
+                    field,
+                    target_dict[field] if target_dict is not None else None,
+                    key_padding_mask[field] if key_padding_mask is not None else None,
+                    teacher_forcing,
+                )
+            else:
+                new_samples[field] = self._sample_field_with_temp(
+                    prob_params[field], temp, field, teacher_forcing=teacher_forcing
+                )
+        return new_samples
 
     def _get_samples(
         self,

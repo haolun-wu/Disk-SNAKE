@@ -59,7 +59,10 @@ class Accuracy:
         return self._unmasked_call(masked_preds, masked_tgts)
 
     def _unmasked_call(
-        self, pred_dict: TensorDict, tgt_token_dict: TensorDict
+        self,
+        pred_dict: TensorDict,
+        tgt_token_dict: TensorDict,
+        compute_overall_accuracy=True,
     ) -> TensorDict:
         accs = TensorDict(fields=pred_dict.fields)
         with torch.no_grad():
@@ -72,12 +75,21 @@ class Accuracy:
                 # pred must be [batch_size, num_classes]
                 pred = pred_dict[field]
                 tgt = tgt_token_dict[field].long()
-                accs[field] = self.compute_acc(pred, tgt)
+                correct, count = self.compute_acc(pred, tgt)
+                accs[field] = correct / count
+                total_correct += correct
+                total_count += count
             for field in pred_dict.text:
                 # pred must be [batch_size, seq_len, num_classes]
                 pred = pred_dict[field].flatten(0, 1)
                 tgt = tgt_token_dict[field].long().reshape(-1)
-                accs[field] = self.compute_acc(pred, tgt)
+                correct, count = self.compute_acc(pred, tgt)
+                accs[field] = correct / count
+                total_correct += correct
+                total_count += count
+        if compute_overall_accuracy:
+            overall_accuracy = total_correct / total_count if total_count != 0 else 0
+            accs['overall_accuracy'] = overall_accuracy
         print("accs:", accs)
         return accs
 
@@ -86,10 +98,12 @@ class Accuracy:
         pred, tgt = pred[mask], tgt[mask]
         return ((tgt.flatten() - pred.flatten())).pow(2).mean().sqrt()
 
-
     def compute_acc(self, pred: torch.Tensor, tgt: torch.Tensor):
         mask = tgt != self.ignore_index
-        return (pred[mask] == tgt[mask]).float().mean()
+        pred, tgt = pred[mask], tgt[mask]
+        correct = (pred == tgt).float().sum().item()
+        count = tgt.numel()
+        return correct, count
 
 
 def mean(x: dict) -> "torch.Tensor":
@@ -115,9 +129,7 @@ class AggregatedMetrics:
         self.num_field_samples = defaultdict(
             int
         )  # number of samples masked for each field, depends on property mask (and padding mask)
-        self.loss_dict = defaultdict(
-            int
-        )  # loss on items masked due to property mask
+        self.loss_dict = defaultdict(int)  # loss on items masked due to property mask
         self.error_dict = defaultdict(
             int
         )  # errors computed uising metrics.py/Accuracy on items masked due to property mask
@@ -141,7 +153,6 @@ class AggregatedMetrics:
                 field_mask = field_mask.view(-1, 1)
 
             n_masked_samples = (field_mask & padding_mask).sum()  # might be zero
-
 
             if n_masked_samples > 0:
                 self.loss_dict[field] = self.weighted_mean(
@@ -178,7 +189,7 @@ class AggregatedMetrics:
             property_mask=None,
             loss=loss_dict["mean"],
             loss_dict=loss_dict,
-            error_dict=self.error_dict
+            error_dict=self.error_dict,
         )
 
     def weighted_mean(self, new_val, old_val, new_weight, old_weight):
