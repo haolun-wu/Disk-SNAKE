@@ -312,6 +312,7 @@ class KBFormer(nn.Module):
                 loss[field] = reduce_by_mask(l_, p_mask, token_mask.view(-1))
 
         return loss
+    
 
     def get_metrics_from_prob_params(
         self,
