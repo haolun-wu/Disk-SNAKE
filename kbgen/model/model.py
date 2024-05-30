@@ -159,7 +159,7 @@ class KBFormer(nn.Module):
                     codes[:, idx] = output[:, 0]
                 else:
                     codes[:, idx] = output.last_hidden_state[:, 0]
-        return codes
+        return codes  # shape: (#train_samples, #fields, #d)
 
     def generate_text_logits(self, condition, target, key_padding_mask):
         # torch transformers expect float masks with
@@ -182,36 +182,6 @@ class KBFormer(nn.Module):
         )
         return pred
 
-    def generate_text_autoregressive(self, condition, temp=0.0, max_len=20):
-        # make initial input
-        batch_size = condition.shape[0]
-        current_input = torch.full(
-            (batch_size, 1),
-            self.config["categorical_pad_token_id"],
-            device=condition.device,
-        )
-        for i in range(max_len):
-            pred = self.text_model.decoder(
-                input_ids=current_input,
-                encoder_hidden_states=condition,
-            )
-            pred = pred[:, -1, :]
-            if temp == 0:
-                current_input = torch.cat(
-                    (current_input, pred.argmax(-1, keepdim=True)), -1
-                )
-            else:
-                probs = torch.softmax(pred / temp, dim=-1)
-                current_input = torch.cat(
-                    (current_input, torch.multinomial(probs, 1)), -1
-                )
-
-            # if all have EOS, stop
-            # if (current_input == self.text_model.tokenizer.eos_token_id).all():
-            #     break
-
-        return current_input[:, 1:]
-
     def _get_probabilistic_params_from_encodings(
         self,
         entity_embeddings: torch.Tensor,
@@ -226,7 +196,7 @@ class KBFormer(nn.Module):
         prob_params = {}
         for idx, field in enumerate(self.config["fields"].all_fields):
             if field in self.config["fields"]["text"]:
-                params = entity_embeddings[:, [idx]]
+                params = entity_embeddings[:, [idx]]  # (batch_size, 1, d_model)
             elif field in self.config["fields"]["numerical"]:
                 params = self.decoder_dict[field](entity_embeddings[:, idx])
             elif field in self.config["fields"]["categorical"]:
@@ -251,6 +221,7 @@ class KBFormer(nn.Module):
         input_dict: TensorDict,
         key_padding_mask: Optional[TensorDict] = None,
         property_mask: Optional[TensorDict] = None,
+        use_path_emb: bool = True,
     ):
         # 1. HIERARCHY: generate hierarchy encodings for each proprty
         hierarchy_encodings = self.hierarchy_encoder.get_all_paths()
@@ -266,107 +237,37 @@ class KBFormer(nn.Module):
         )
 
         # 4. ATTEND: Self-attention over all fields
-        codes += hierarchy_encodings  # [batch_size, num_fields, d_model]
+        if use_path_emb:
+            codes += hierarchy_encodings  # [batch_size, num_fields, d_model]
+        else:
+            pass
+
         # testing attend to all
         return (
-            self.entity_encoder(codes, attention_mask=property_mask),
+            self.entity_encoder(
+                codes, attention_mask=property_mask
+            ),  # property_mask: [batch_size, seq_len]
             hierarchy_encodings,
         )
-
-    def sample_with_temp(
-        self,
-        prob_params,
-        target_dict=None,
-        key_padding_mask=None,
-        temp=0.0,
-        teacher_forcing=True,
-    ):
-        new_samples = TensorDict(fields=self.config["fields"])
-        for field in self.config["fields"].all_fields:
-            if field in self.config["fields"]["text"]:
-                new_samples[field] = self._sample_field_with_temp(
-                    prob_params[field],
-                    temp,
-                    field,
-                    target_dict[field] if target_dict is not None else None,
-                    key_padding_mask[field] if key_padding_mask is not None else None,
-                    teacher_forcing,
-                )
-            else:
-                new_samples[field] = self._sample_field_with_temp(
-                    prob_params[field], temp, field, teacher_forcing=teacher_forcing
-                )
-        return new_samples
-
-    def _sample_field_with_temp(
-        self,
-        prob_params,
-        temp,
-        field,
-        target=None,
-        key_padding_mask=None,
-        teacher_forcing=True,
-    ):
-        """Sample from a batch of prob_params with temperature."""
-        if field in self.config["fields"]["numerical"]:
-            return GMMLoss.sample(prob_params, 1, temp)
-        elif field in self.config["fields"]["categorical"]:
-            if temp == 0:
-                return prob_params.argmax(-1)
-            else:
-                proba = torch.softmax(prob_params / temp, dim=-1)
-                return torch.multinomial(proba, 1).view(-1)
-        elif field in self.config["fields"]["text"]:
-            if not teacher_forcing:
-                return self.generate_text_autoregressive(prob_params, temp)
-            else:
-                assert target is not None, "Target is None with teacher forcing"
-                logits = self.generate_text_logits(
-                    prob_params, target, key_padding_mask
-                )
-                if temp == 0:
-                    return logits.argmax(-1)
-                else:
-                    proba = torch.softmax(logits / temp, dim=-1)
-                    shape = proba.shape
-                    proba = proba.view(-1, proba.shape[-1])
-                    decisions = torch.multinomial(proba, 1)
-                    return decisions.view(shape[:-1])
 
     def get_probabilistic_params(
         self,
         input_dict: TensorDict,
         key_padding_mask: Optional[TensorDict] = None,
         property_mask: Optional[TensorDict] = None,
+        use_path_emb: bool = True,
     ) -> TensorDict:
+        """
+        # Return the sampled tensor for each field
+        # If the codes is of shape (batch_size, num_fields, d_model)
+        # Then the retuned TensorDict has num_fields k:v, and each v is of shape (batch_size, 1, d_model)
+        """
         out, hierarchy_encodings = self.get_all_encodings(
-            input_dict, key_padding_mask, property_mask
+            input_dict, key_padding_mask, property_mask, use_path_emb
         )
         params = self._get_probabilistic_params_from_encodings(out, hierarchy_encodings)
         return TensorDict(params, fields=input_dict.fields)
 
-    def _get_samples(
-        self,
-        input_dict: TensorDict,
-        key_padding_mask: Optional[TensorDict] = None,
-        property_mask: Optional[TensorDict] = None,
-        temperature: Optional[float] = 0.0,
-        teacher_forcing: bool = True,
-    ) -> TensorDict:
-        params = self.get_probabilistic_params(
-            input_dict, key_padding_mask, property_mask
-        )
-
-        # now get actual predicted samples
-        return self.sample_with_temp(
-            params,
-            input_dict,
-            key_padding_mask,
-            temp=temperature,
-            teacher_forcing=teacher_forcing,
-        )
-
-    # TODO move this to Trainer or Diffusion Class
     def get_loss_from_prob_params(
         self,
         prob_params: TensorDict,
@@ -395,8 +296,16 @@ class KBFormer(nn.Module):
                 # because prob params for text are not logits, we have to get those first
                 token_mask = target != self.config["categorical_pad_token_id"]
                 key_padding_mask = (~token_mask).float()
-                key_padding_mask[key_padding_mask == 1] = float("-inf")
+                key_padding_mask[key_padding_mask == 1] = float(
+                    "-inf"
+                )  # 0 for valid tokens, -inf for masked tokens
                 sample = self.generate_text_logits(prob_param, target, key_padding_mask)
+
+                # prob_param: (batch_size, 1, d_model)
+                # target: (batch_size, seq_len)
+                # sample: (batch_size, seq_len, vocab)
+                # p_mask: (batch_size)
+                # key_padding_mask: (batch_size, seq_len)
                 target = target.view(-1)  # batch * seq
                 sample = sample.reshape(target.shape[0], -1)
                 l_ = self.ce_loss(sample, target)
@@ -453,9 +362,13 @@ class KBFormer(nn.Module):
         tgt_dict: TensorDict,
         key_padding_mask: TensorDict,
         property_mask: TensorDict,
+        use_path_emb: bool = True,
     ):
         prob_params = self.get_probabilistic_params(
-            tgt_dict, key_padding_mask, property_mask
+            tgt_dict,
+            key_padding_mask,
+            property_mask,
+            use_path_emb,
         )
         losses = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
         losses["mean"] = (loss := mean(losses))
@@ -475,6 +388,7 @@ class KBFormer(nn.Module):
         eval_mode: bool = False,
         unscale=False,
         dataset=None,
+        use_path_emb: bool = True,
     ) -> ModelOutputs:
         property_mask = self._sample_property_mask(
             tgt_dict,
@@ -483,7 +397,7 @@ class KBFormer(nn.Module):
             ],  # select masking rate
             seed=self.config["seed"] if eval_mode else None,  # fix seed for test set
         )
-        output = self.forward(tgt_dict, key_padding_mask, property_mask)
+        output = self.forward(tgt_dict, key_padding_mask, property_mask, use_path_emb)
 
         if eval_mode:
             output.error_dict = self.get_metrics_from_prob_params(
@@ -495,35 +409,6 @@ class KBFormer(nn.Module):
             )
 
         return output
-
-    def sample(
-        self,
-        input_dict: TensorDict,
-        key_padding_mask: Optional[TensorDict] = None,
-        property_mask: Optional[TensorDict] = None,
-        temperature: Optional[float] = 0.0,
-        teacher_forcing: bool = True,
-    ) -> TensorDict:
-        if not self.training:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                # torch 2 has buggy warning in transformer decoder
-                preds = self._get_samples(
-                    input_dict,
-                    key_padding_mask,
-                    property_mask,
-                    temperature,
-                    teacher_forcing,
-                )
-        else:
-            preds = self._get_samples(
-                input_dict,
-                key_padding_mask,
-                property_mask,
-                temperature,
-                teacher_forcing,
-            )
-        return preds
 
     def _merge_and_apply_masks(
         self, codes: torch.Tensor, padding_mask=None, property_mask=None, inplace=False
@@ -602,3 +487,171 @@ class KBFormer(nn.Module):
             except ValueError:
                 pass
         return property_mask
+
+    """OTHERS"""
+
+    def generate_text_autoregressive(self, condition, temp=0.0, max_len=20):
+        # make initial input
+        batch_size = condition.shape[0]
+        current_input = torch.full(
+            (batch_size, 1),
+            self.config["categorical_pad_token_id"],
+            device=condition.device,
+        )
+        for i in range(max_len):
+            pred = self.text_model.decoder(
+                input_ids=current_input,
+                encoder_hidden_states=condition,
+            )
+            pred = pred[:, -1, :]
+            if temp == 0:
+                current_input = torch.cat(
+                    (current_input, pred.argmax(-1, keepdim=True)), -1
+                )
+            else:
+                probs = torch.softmax(pred / temp, dim=-1)
+                current_input = torch.cat(
+                    (current_input, torch.multinomial(probs, 1)), -1
+                )
+
+            # if all have EOS, stop
+            # if (current_input == self.text_model.tokenizer.eos_token_id).all():
+            #     break
+
+        return current_input[:, 1:]
+
+    def sample_with_temp(
+        self,
+        prob_params,
+        target_dict=None,
+        key_padding_mask=None,
+        temp=0.0,
+        teacher_forcing=True,
+    ):
+        new_samples = TensorDict(fields=self.config["fields"])
+        for field in self.config["fields"].all_fields:
+            if field in self.config["fields"]["text"]:
+                new_samples[field] = self._sample_field_with_temp(
+                    prob_params[field],
+                    temp,
+                    field,
+                    target_dict[field] if target_dict is not None else None,
+                    key_padding_mask[field] if key_padding_mask is not None else None,
+                    teacher_forcing,
+                )
+            else:
+                new_samples[field] = self._sample_field_with_temp(
+                    prob_params[field], temp, field, teacher_forcing=teacher_forcing
+                )
+        return new_samples
+
+    def _sample_field_with_temp(
+        self,
+        prob_params,
+        temp,
+        field,
+        target=None,
+        key_padding_mask=None,
+        teacher_forcing=True,
+    ):
+        """Sample from a batch of prob_params with temperature."""
+        if field in self.config["fields"]["numerical"]:
+            return GMMLoss.sample(prob_params, 1, temp)
+        elif field in self.config["fields"]["categorical"]:
+            if temp == 0:
+                return prob_params.argmax(-1)
+            else:
+                proba = torch.softmax(prob_params / temp, dim=-1)
+                return torch.multinomial(proba, 1).view(-1)
+        elif field in self.config["fields"]["text"]:
+            if not teacher_forcing:
+                return self.generate_text_autoregressive(prob_params, temp)
+            else:
+                assert target is not None, "Target is None with teacher forcing"
+                logits = self.generate_text_logits(
+                    prob_params, target, key_padding_mask
+                )
+                if temp == 0:
+                    return logits.argmax(-1)
+                else:
+                    proba = torch.softmax(logits / temp, dim=-1)
+                    shape = proba.shape
+                    proba = proba.view(-1, proba.shape[-1])
+                    decisions = torch.multinomial(proba, 1)
+                    return decisions.view(shape[:-1])
+
+    def _get_samples(
+        self,
+        input_dict: TensorDict,
+        key_padding_mask: Optional[TensorDict] = None,
+        property_mask: Optional[TensorDict] = None,
+        temperature: Optional[float] = 0.0,
+        teacher_forcing: bool = True,
+        use_path_emb: bool = True,
+    ) -> TensorDict:
+        params = self.get_probabilistic_params(
+            input_dict, key_padding_mask, property_mask, use_path_emb
+        )
+
+        # now get actual predicted samples
+        return self.sample_with_temp(
+            params,
+            input_dict,
+            key_padding_mask,
+            temp=temperature,
+            teacher_forcing=teacher_forcing,
+        )
+
+    def _get_samples(
+        self,
+        input_dict: TensorDict,
+        key_padding_mask: Optional[TensorDict] = None,
+        property_mask: Optional[TensorDict] = None,
+        temperature: Optional[float] = 0.0,
+        teacher_forcing: bool = True,
+        use_path_emb: bool = True,
+    ) -> TensorDict:
+        params = self.get_probabilistic_params(
+            input_dict, key_padding_mask, property_mask, use_path_emb
+        )
+
+        # now get actual predicted samples
+        return self.sample_with_temp(
+            params,
+            input_dict,
+            key_padding_mask,
+            temp=temperature,
+            teacher_forcing=teacher_forcing,
+        )
+
+    def sample(
+        self,
+        input_dict: TensorDict,
+        key_padding_mask: Optional[TensorDict] = None,
+        property_mask: Optional[TensorDict] = None,
+        temperature: Optional[float] = 0.0,
+        teacher_forcing: bool = True,
+        use_path_emb: bool = True,
+    ) -> TensorDict:
+        if not self.training:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # torch 2 has buggy warning in transformer decoder
+                preds = self._get_samples(
+                    input_dict,
+                    key_padding_mask,
+                    property_mask,
+                    temperature,
+                    teacher_forcing,
+                    use_path_emb,
+                )
+        else:
+            preds = self._get_samples(
+                input_dict,
+                key_padding_mask,
+                property_mask,
+                temperature,
+                teacher_forcing,
+                use_path_emb,
+            )
+        return preds

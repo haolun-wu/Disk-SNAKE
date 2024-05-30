@@ -78,6 +78,7 @@ class Accuracy:
                 pred = pred_dict[field].flatten(0, 1)
                 tgt = tgt_token_dict[field].long().reshape(-1)
                 accs[field] = self.compute_acc(pred, tgt)
+        print("accs:", accs)
         return accs
 
     def compute_rms(self, pred: torch.Tensor, tgt: torch.Tensor):

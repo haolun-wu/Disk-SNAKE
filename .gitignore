@@ -1,1 +1,4 @@
 venv/
+.local/
+wandb/
+logdir/models/

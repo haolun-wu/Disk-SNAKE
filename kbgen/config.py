@@ -1,11 +1,12 @@
 import os
-rootdir = os.path.dirname(os.path.dirname(__file__))
+# rootdir = os.path.dirname(os.path.dirname(__file__))
+rootdir='logdir'
 # if "KBGEN_LOGDIR" in os.environ:
 #     rootdir = os.environ['KBGEN_LOGDIR']
 #     print(f"Found environment variable KBGEN_LOGDIR={rootdir}")
 
 common_defaults = {
-    "dataset": "iris",         # gsm, nuclear, homedepot
+    "dataset": "gsm",         # gsm, nuclear, homedepot, iris
     "d_model": 32,             # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,             # Multiplier for the inner dim in feed forward layer
     "nhead": 4,                 # Number of attention heads in Entity encoder + text model if custom
@@ -38,6 +39,8 @@ common_defaults = {
     "log_params": 0,         # Log model parameters and gradients to wandb
     "float_precision": "float32",  # float32, float16, float64
     "never_mask": [],         # Properties that are never masked
+    "use_path_emb": True,         # Whether to use the path embedding
+    "num_data": 10000,         # Whether to use the path embedding
 }
 
 defaults_customLM = common_defaults.copy()

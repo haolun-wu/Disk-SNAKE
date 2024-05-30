@@ -109,6 +109,7 @@ class Dataset:
             path=config.get("data_path", None),
             tokenizer=config.get("tokenizer", None),
             numerical_tokenizer=config.get("numerical_tokenizer", None),
+            num_data=config.get("num_data", None),
         )
         if update:
             logger.info("Updating config with dataset properties.")
@@ -216,6 +217,8 @@ class Dataset:
                 tensor_dict[field] = numbers
                 am = numbers == numerical_tokenizer.pad_token
                 attention_mask_dict[field] = am.to(dtype).masked_fill_(am, -torch.inf)
+        # print("df in datasets.py:", self.df)
+        # print("tensor_dict in datasets.py:", tensor_dict)
         return TensorDict(tensor_dict, fields=fields), TensorDict(
             attention_mask_dict, fields=fields
         )
@@ -360,7 +363,7 @@ class GSM(Dataset):
         test_size = 0.2 if test_size is None else test_size
 
         # load data
-        df_path = os.path.join(path, "gsm_processed.csv")
+        df_path = os.path.join(path, "gsm_processed_50.csv")
         schema_path = os.path.join(path, "gsm_schema.json")
         for p in [path, df_path, schema_path]:
             if not os.path.exists(p):
@@ -556,6 +559,7 @@ class Iris(Dataset):
         self.fields = Fields(
             {
                 "numerical": ["slength", "swidth", "plength", "pwidth"],
+                # "numerical": [],
                 "categorical": ["label"],
                 "text": [],
             }
@@ -564,6 +568,58 @@ class Iris(Dataset):
             df, self.fields, seed, test_size, tokenizer, numerical_tokenizer
         )
 
+
+class Date(Dataset):
+    def __init__(
+        self,
+        path=None,
+        seed=42,
+        test_size=0.2,
+        tokenizer=None,
+        numerical_tokenizer=None,
+        num_data=None,
+    ):
+        # initialize arguments
+        path = os.path.join(rootdir, "data/date") if path is None else path
+        self.path = path
+        seed = 42 if seed is None else seed
+        test_size = 0.2 if test_size is None else test_size
+
+        # load data
+        df_path = os.path.join(path, "date_dataset_set.csv")
+        schema_path = os.path.join(path, "date_schema_set.json")
+        for p in [path, df_path, schema_path]:
+            if not os.path.exists(p):
+                raise ValueError(
+                    f"{p} does not exist. To download the dataset"
+                    ", please see `exploration_gsm.ipynb`."
+                    " Also make sure to set the `rootdir` variable in `config.py`."
+                )
+        # Use the first {num_data} samples
+        df = pd.read_csv(df_path, nrows=num_data)
+        schema = json.loads(open(schema_path).read())
+        self.schema = schema
+
+        # schema is for fields and their basic types
+        types_to_nodes = schema_utils.by_types(schema)
+        node_ids = schema_utils.get_ids(schema)
+        columns = schema_utils.match_fields_to_nodes(df.columns, node_ids).values()
+        df.columns = list(columns)  # rename columns to match schema
+
+        self.fields = Fields(
+            numerical=types_to_nodes[0],
+            categorical=types_to_nodes[1],
+            text=types_to_nodes[2],
+        )
+        super().__init__(
+            df,
+            self.fields,
+            seed,
+            test_size,
+            tokenizer,
+            numerical_tokenizer,
+        )
+        # self.train_idx, self.val_idx = self.remove_similar(self.train_idx, self.val_idx)
 
 def load_dataset(config):
     if config["dataset"] == "gsm":
@@ -578,3 +634,8 @@ def load_dataset(config):
         return TwoMoons.from_config_(config)
     elif config["dataset"] == "iris":
         return Iris.from_config_(config)
+    elif config["dataset"] == "date-set-order-Y":
+        return Date.from_config_(config)
+    elif config["dataset"] == "date-set-order-N":
+        config["use_path_emb"] = False
+        return Date.from_config_(config)

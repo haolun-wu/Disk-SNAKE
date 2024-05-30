@@ -30,7 +30,11 @@ class RunTracker:
 
         if self.config["wandb"]:
             wandb.init(
-                project="kb-generator",
+                project="DiSK-{}-d{}-e{}".format(
+                    self.config["dataset"],
+                    self.config["num_data"],
+                    self.config["epochs"],
+                ),
                 config=self.config,
                 tags=self.config["tags"],
                 name=run_name,

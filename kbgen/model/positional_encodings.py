@@ -46,6 +46,9 @@ class Pathing(ABC, nn.Module):
         Raises:
             ValueError: If embedding_type is not "node" or "word".
         """ """"""
+
+        ### What the schema_ids really is:
+        # ['phone.weight', 'phone.height', 'phone.depth', 'phone.width', 'phone.display_size', 'phone.battery', 'phone.launch.day', 'phone.launch.month', 'phone.launch.year', ...]
         super().__init__()
         if isinstance(schema_ids, list):
             schema_ids = {node: i for i, node in enumerate(schema_ids)}
@@ -53,6 +56,8 @@ class Pathing(ABC, nn.Module):
         if embedding_type == "word":
             self._id_lookup = {id: node for node, id in schema_ids.items()}
             # convert idx to sequence of word ids
+            # self.words: {'person': 1, 'name': 2, 'height': 3, 'dob': 4, 'year': 5, 'month': 6, 'day': 7}
+            # self.schema_id_to_word_ids: {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
             self.words = {}
             self.schema_id_to_word_ids = {}
             for id, node_path in self._id_lookup.items():
@@ -66,6 +71,15 @@ class Pathing(ABC, nn.Module):
             ]
 
             # pad the sequence of word ids
+            # paths = [
+            #     [1, 0, 0],  # person
+            #     [1, 2, 0],  # person.name
+            #     [1, 3, 0],  # person.height
+            #     [1, 4, 0],  # person.dob
+            #     [1, 4, 5],  # person.dob.year
+            #     [1, 4, 6],  # person.dob.month
+            #     [1, 4, 7],  # person.dob.day
+            # ] to tensor
             paths = pad_sequence(
                 [
                     torch.tensor(self._schema_id_to_word_ids_seq(id))
@@ -73,6 +87,7 @@ class Pathing(ABC, nn.Module):
                 ],
                 batch_first=True,
             )
+            print("paths:", paths)
             self.register_buffer("paths", paths)
             self.register_buffer("blank_x", torch.zeros(1, len(paths), d_model))
         elif embedding_type == "node":

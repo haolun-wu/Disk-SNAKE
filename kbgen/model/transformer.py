@@ -362,6 +362,7 @@ class TransformerEncoder(_Transformer):
     def forward(self, src, mask=None, attention_mask=None, is_causal=False):
         # x: (batch_size, seq_len, d_model)
         # mask: (seq_len, seq_len)
+        # attention_mask: (batch_size, seq_len)
         # key_padding_mask: (batch_size, seq_len)
         output = self.model(src, mask=mask, src_key_padding_mask=attention_mask, is_causal=is_causal)
         return output

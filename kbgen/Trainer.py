@@ -67,7 +67,11 @@ class Trainer:
                         self.input_dict.iloc(batch),
                         self.pad_mask_dict.iloc(batch),
                         self.config,
-                    )
+                    ),
+                    eval_mode=False,
+                    unscale=True,
+                    dataset=self.dataset,
+                    use_path_emb=self.config["use_path_emb"],
                 )
                 output.loss.backward()
                 self.optimizer.step()
@@ -75,7 +79,6 @@ class Trainer:
 
             if not self.config.wandb:
                 pbar.set_description_str(f"Loss: {output.loss.item():^6.3e}")
-
 
             # Validation -----------------------------------------------------
             do_log_outputs = epoch % 10 == 0
@@ -85,35 +88,37 @@ class Trainer:
                 self.logger.save_model(self.model, f"{epoch}.pt")
 
             if do_log_outputs:
-              self.model.eval()
-              for split in ["train", "val"]:
-                  loader = self.trainloader if split == "train" else self.testloader
+                self.model.eval()
+                for split in ["train", "val"]:
+                    loader = self.trainloader if split == "train" else self.testloader
 
-                  aggregator = AggregatedMetrics(self.config)
-                  with torch.inference_mode():
-                      for (batch,) in loader:
-                          output = self.model.apply(
-                              *trim_padding_(
-                                  self.input_dict.iloc(batch),
-                                  self.pad_mask_dict.iloc(batch),
-                                  self.config,
-                              ),
-                              eval_mode=True,
-                              unscale=True,
-                              dataset=self.dataset,
-                          )
-                          aggregator.add_contribution(output)
-                  output = aggregator.get_output()
-                  errors_string = [
-                      f"{k.split('.')[-1]}{v:^4.1e}"
-                      for k, v in output.error_dict.items()
-                  ]
-                  if not self.config.wandb:
-                      pbar.set_postfix_str(
-                          f"Val L:{output.loss.item():^4.1e}" + "|".join(errors_string)
-                      )
+                    aggregator = AggregatedMetrics(self.config)
+                    with torch.inference_mode():
+                        for (batch,) in loader:
+                            output = self.model.apply(
+                                *trim_padding_(
+                                    self.input_dict.iloc(batch),
+                                    self.pad_mask_dict.iloc(batch),
+                                    self.config,
+                                ),
+                                eval_mode=True,
+                                unscale=True,
+                                dataset=self.dataset,
+                                use_path_emb=self.config["use_path_emb"],
+                            )
+                            aggregator.add_contribution(output)
+                    output = aggregator.get_output()
+                    errors_string = [
+                        f"{k.split('.')[-1]}{v:^4.1e}"
+                        for k, v in output.error_dict.items()
+                    ]
+                    if not self.config.wandb:
+                        pbar.set_postfix_str(
+                            f"Val L:{output.loss.item():^4.1e}"
+                            + "|".join(errors_string)
+                        )
 
-                  self.logger.log_outputs(output, epoch, prefix=split)
+                    self.logger.log_outputs(output, epoch, prefix=split)
 
         print(
             "Finished successfully"

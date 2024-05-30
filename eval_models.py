@@ -1,3 +1,4 @@
+
 # %%
 import torch
 from kbgen.utils.log import RunTracker
@@ -9,7 +10,10 @@ import tqdm
 
 
 def eval_run(run_name):
-  run = RunTracker.from_logdir(name=run_name, force_device="cuda")
+  # device = "cuda" if torch.cuda.is_available() else "cpu"
+  # run = RunTracker.from_logdir(name=run_name, force_device="cuda")
+  run = RunTracker.from_logdir(name=run_name)
+  print("device:", run.config["device"])
   run.config["wandb"] = 0
   model = run.load_latest_model().eval()
   trainer = Trainer(run.config)
@@ -94,11 +98,13 @@ def eval_run(run_name):
 
 # give a list of run names
 run_names = [
-"09-28-11-43-43different_seeds_for_good_model_gsm_dataseed42-qcCZz_L2td2_te2_d256gsm",
-"09-28-11-40-17different_seeds_for_good_model_gsm_dataseed42-yhDDU_L2td2_te2_d256gsm",
-"09-28-11-40-19different_seeds_for_good_model_gsm_dataseed42-ixcYr_L2td2_te2_d256gsm",
-"09-28-11-40-17different_seeds_for_good_model_gsm_dataseed42-kTEXC_L2td2_te2_d256gsm",
-"09-28-11-40-19different_seeds_for_good_model_gsm_dataseed42-ZhFJF_L2td2_te2_d256gsm",
+# "09-28-11-43-43different_seeds_for_good_model_gsm_dataseed42-qcCZz_L2td2_te2_d256gsm",
+# "09-28-11-40-17different_seeds_for_good_model_gsm_dataseed42-yhDDU_L2td2_te2_d256gsm",
+# "09-28-11-40-19different_seeds_for_good_model_gsm_dataseed42-ixcYr_L2td2_te2_d256gsm",
+# "09-28-11-40-17different_seeds_for_good_model_gsm_dataseed42-kTEXC_L2td2_te2_d256gsm",
+# "09-28-11-40-19different_seeds_for_good_model_gsm_dataseed42-ZhFJF_L2td2_te2_d256gsm",
+# "05-19-21-42-24-ChsyF_L2td2_te2_d32gsm",
+"05-19-21-41-20-ywExB_L2td2_te2_d32iris"
 ] #nhead 4, lr 0.001, periodic embs, wd 0.0, dropout 0.1, dataseed 42
 
 
