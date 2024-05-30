@@ -4,6 +4,32 @@ from typing import Callable, Dict, Literal, Optional, TypeVar
 from functools import cached_property
 from collections import OrderedDict
 from dataclasses import dataclass
+import torch.nn.functional as F
+
+
+def compute_min_ce_loss(prediction, ground_truth):
+    # prediction: shape (num_masks, seq_len, vocab_size)
+    # ground_truth: shape (num_masks, seq_len)
+
+    num_masks, seq_len, vocab_size = prediction.shape
+
+    # Initialize a matrix to store the cross-entropy losses
+    ce_loss_matrix = torch.zeros((num_masks, num_masks), device=prediction.device)
+
+    # Compute the cross-entropy loss for all pairs
+    for i in range(num_masks):
+        for j in range(num_masks):
+            # Expand ground truth to have shape (seq_len, vocab_size) for F.cross_entropy
+            ground_truth_expanded = ground_truth[j].view(-1)
+            prediction_expanded = prediction[i].view(-1, vocab_size)
+            ce_loss_matrix[i, j] = F.cross_entropy(
+                prediction_expanded, ground_truth_expanded, reduction="mean"
+            )
+
+    # Select the minimum loss for each prediction
+    min_ce_loss = torch.min(ce_loss_matrix, dim=1)[0]
+
+    return min_ce_loss
 
 
 def random_mask(*shape, mask_rate=0.8, device=None, seed=None):

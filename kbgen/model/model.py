@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
 from typing import Optional, Tuple, Union
 
 from ..utils import (
@@ -10,6 +13,7 @@ from ..utils import (
     is_missing,
     ModelOutputs,
     GMMLoss,
+    compute_min_ce_loss,
 )
 from ..utils.metrics import Accuracy
 from .transformer import TransformerEncoder
@@ -301,18 +305,20 @@ class KBFormer(nn.Module):
                 )  # 0 for valid tokens, -inf for masked tokens
                 sample = self.generate_text_logits(prob_param, target, key_padding_mask)
 
-                # prob_param: (batch_size, 1, d_model)
-                # target: (batch_size, seq_len)
-                # sample: (batch_size, seq_len, vocab)
-                # p_mask: (batch_size)
-                # key_padding_mask: (batch_size, seq_len)
-                target = target.view(-1)  # batch * seq
-                sample = sample.reshape(target.shape[0], -1)
-                l_ = self.ce_loss(sample, target)
-                loss[field] = reduce_by_mask(l_, p_mask, token_mask.view(-1))
+                # Determine the positions where the property is masked
+                masked_positions = (p_mask == float("-inf")).nonzero(as_tuple=True)[0]
+                num_masks = masked_positions.numel()
+                if num_masks == 0:
+                    continue
+
+                # Select masked samples and targets based on masked positions
+                masked_pred = sample[masked_positions]  # (num_masks, seq_len, d_model)
+                masked_targets = target[masked_positions]  # (num_masks, seq_len)
+
+                min_losses = compute_min_ce_loss(masked_pred, masked_targets)
+                loss[field] = min_losses.mean()
 
         return loss
-    
 
     def get_metrics_from_prob_params(
         self,
