@@ -6,7 +6,7 @@ rootdir='logdir'
 #     print(f"Found environment variable KBGEN_LOGDIR={rootdir}")
 
 common_defaults = {
-    "dataset": "gsm",         # gsm, nuclear, homedepot, iris
+    "dataset": "date-set-order-N",         # gsm, nuclear, homedepot, iris
     "d_model": 32,             # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,             # Multiplier for the inner dim in feed forward layer
     "nhead": 4,                 # Number of attention heads in Entity encoder + text model if custom
