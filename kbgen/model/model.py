@@ -304,6 +304,8 @@ class KBFormer(nn.Module):
                     "-inf"
                 )  # 0 for valid tokens, -inf for masked tokens
                 sample = self.generate_text_logits(prob_param, target, key_padding_mask)
+                # sample: (batch_size, seq_len, d_model)
+                # target: (batch_size, seq_len)
 
                 # Determine the positions where the property is masked
                 masked_positions = (p_mask == float("-inf")).nonzero(as_tuple=True)[0]
