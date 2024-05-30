@@ -89,7 +89,11 @@ class Accuracy:
 
     def compute_acc(self, pred: torch.Tensor, tgt: torch.Tensor):
         mask = tgt != self.ignore_index
-        return (pred[mask] == tgt[mask]).float().mean()
+        pred, tgt = pred[mask], tgt[mask]
+        print("mask:", mask.shape)
+        print("pred:", pred.shape)
+        print("tgt:", tgt.shape)
+        return (pred == tgt).float().mean()
 
 
 def mean(x: dict) -> "torch.Tensor":

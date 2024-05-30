@@ -355,6 +355,7 @@ class GSM(Dataset):
         test_size=0.2,
         tokenizer=None,
         numerical_tokenizer=None,
+        num_data=None,
     ):
         # initialize arguments
         path = os.path.join(rootdir, "data/gsm") if path is None else path
@@ -372,7 +373,7 @@ class GSM(Dataset):
                     ", please see `exploration_gsm.ipynb`."
                     " Also make sure to set the `rootdir` variable in `config.py`."
                 )
-        df = pd.read_csv(df_path)
+        df = pd.read_csv(df_path, nrows=num_data)
         schema = json.loads(open(schema_path).read())
         self.schema = schema
 
