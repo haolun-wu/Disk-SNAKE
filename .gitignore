@@ -2,3 +2,4 @@ venv/
 .local/
 wandb/
 logdir/models/
+*.out
