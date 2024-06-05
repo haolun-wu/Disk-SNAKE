@@ -18,7 +18,9 @@ for lr in "${lrs[@]}"; do
 #SBATCH --gres=gpu:a100l:1
 #SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=60G
+#SBATCH --mem=32G
+#SBATCH --partition=unkillable
+
 
 source /home/mila/h/haolun.wu/projects/Disk-SNAKE/venv/bin/activate
 module load python/3.10
