@@ -62,9 +62,10 @@ class Accuracy:
         self,
         pred_dict: TensorDict,
         tgt_token_dict: TensorDict,
-        compute_overall_accuracy=True,
+        compute_overall_acc=True,
     ) -> TensorDict:
         accs = TensorDict(fields=pred_dict.fields)
+        total_correct, total_count = 0, 0
         with torch.no_grad():
             for field in pred_dict.numerical:
                 tgt = tgt_token_dict[field].float()
@@ -87,9 +88,9 @@ class Accuracy:
                 accs[field] = correct / count
                 total_correct += correct
                 total_count += count
-        if compute_overall_accuracy:
-            overall_accuracy = total_correct / total_count if total_count != 0 else 0
-            accs['overall_accuracy'] = overall_accuracy
+        if compute_overall_acc:
+            overall_acc = total_correct / total_count if total_count != 0 else 0
+            accs["overall_acc"] = overall_acc
         print("accs:", accs)
         return accs
 
@@ -104,6 +105,96 @@ class Accuracy:
         correct = (pred == tgt).float().sum().item()
         count = tgt.numel()
         return correct, count
+
+
+class Recall:  # This is for set-model. So we flatten all fields.
+    def __init__(
+        self,
+        fields: Fields,
+        ignore_idx_cat: int = -1,
+        ignore_idx_num: Optional[int] = -1000,
+    ):
+        self.ignore_index = ignore_idx_cat
+        self.ignore_index_continuous = ignore_idx_num
+        self.fields = fields
+
+    def __call__(
+        self,
+        pred_dict: TensorDict,
+        tgt_token_dict: TensorDict,
+        property_mask: TensorDict,
+        unscale=False,
+        dataset=None,
+        eos_token_id=50256
+    ) -> TensorDict:
+
+        # if property_mask is None:
+        #     return self._unmasked_call(pred_dict, tgt_token_dict)
+        # elif not isinstance(property_mask, dict):
+        #     assert len(property_mask[0]) == len(self.fields.all_fields)
+        #     property_mask = {
+        #         field: property_mask[:, i]
+        #         for i, field in enumerate(self.fields.all_fields)
+        #     }
+        pred_tensor = torch.stack(list(pred_dict.values()), dim=1)
+        target_tensor = torch.stack(list(tgt_token_dict.values()), dim=1)
+        property_mask_tensor = torch.stack(list(property_mask.values()), dim=1)
+
+        batch_size, num_fields, seq_len = pred_tensor.shape
+
+        recall_list = []
+        correct_list = []
+        num_masks_list = []
+        pred_seq_list = []
+        target_seq_list = []
+
+        for i in range(batch_size):  # Iterate over each sample
+            masked_positions = property_mask_tensor[i].nonzero(as_tuple=True)[
+                0
+            ]  # Get masked positions
+            num_masks = masked_positions.numel()
+
+            if num_masks == 0:
+                recall_list.append(0.0)
+                correct_list.append(0)
+                continue
+
+            pred_sequences_tensor = torch.stack(
+                [pred_tensor[i, pos] for pos in masked_positions]
+            )
+            target_sequences_tensor = torch.stack(
+                [target_tensor[i, pos] for pos in masked_positions]
+            )
+
+            # Convert tensor sequences to sets of tuples
+            # pred_sequences_set = {tuple(seq.tolist()) for seq in pred_sequences_tensor}
+            # target_sequences_set = {
+            #     tuple(seq.tolist()) for seq in target_sequences_tensor
+            # }
+            pred_sequences_set = {
+                tuple(pred_tensor[i, pos][:(
+                    pred_tensor[i, pos].eq(eos_token_id).nonzero(as_tuple=True)[0][0].item() 
+                    if eos_token_id in pred_tensor[i, pos] else len(pred_tensor[i, pos]))
+                ].tolist()) for pos in masked_positions
+            }
+            target_sequences_set = {
+                tuple(target_tensor[i, pos][:(
+                    target_tensor[i, pos].eq(eos_token_id).nonzero(as_tuple=True)[0][0].item() 
+                    if eos_token_id in target_tensor[i, pos] else len(target_tensor[i, pos]))
+                ].tolist()) for pos in masked_positions
+            }
+
+            correct = len(pred_sequences_set.intersection(target_sequences_set))
+
+            recall = correct / num_masks if num_masks > 0 else 0.0
+
+            recall_list.append(recall)
+            correct_list.append(correct)
+            num_masks_list.append(num_masks)
+            pred_seq_list.append(pred_sequences_tensor)
+            target_seq_list.append(target_sequences_tensor)
+
+        return recall_list, correct_list, num_masks_list, pred_seq_list, target_seq_list
 
 
 def mean(x: dict) -> "torch.Tensor":
@@ -134,6 +225,8 @@ class AggregatedMetrics:
             int
         )  # errors computed uising metrics.py/Accuracy on items masked due to property mask
         self.config = config
+        self.total_correct_predictions = 0  # Total correct predictions for text fields
+        self.total_masks = 0  # Total number of masks for text fields
 
     def add_contribution(self, new_outputs: ModelOutputs):
         assert torch.is_floating_point(new_outputs.property_mask), (
@@ -168,7 +261,22 @@ class AggregatedMetrics:
                         n_masked_samples,
                         self.num_field_samples[field],
                     )
+                    # Update the total correct predictions and total masks for overall accuracy
+                    if field in self.config["fields"]["text"]:
+                        field_accuracy = new_outputs.error_dict[field]
+                        correct_predictions = field_accuracy * n_masked_samples.item()
+                        self.total_correct_predictions += correct_predictions
+                        self.total_masks += n_masked_samples.item()
+
                 self.num_field_samples[field] += n_masked_samples
+
+        # Compute overall accuracy for text fields
+        if self.total_masks > 0:
+            overall_acc = self.total_correct_predictions / self.total_masks
+        else:
+            overall_acc = 0.0
+
+        self.error_dict["overall_acc"] = overall_acc
 
     def _get_padding_token(self, field):
         if field in self.config["fields"]["numerical"]:
@@ -183,6 +291,16 @@ class AggregatedMetrics:
     def get_output(self):
         loss_dict = self.loss_dict.copy()
         loss_dict["mean"] = mean(self.loss_dict)
+
+        # Compute overall accuracy for text fields
+        if self.total_masks > 0:
+            overall_accuracy = self.total_correct_predictions / self.total_masks
+        else:
+            overall_accuracy = 0.0
+
+        error_dict = self.error_dict.copy()
+        error_dict["overall_accuracy"] = overall_accuracy
+
         return ModelOutputs(
             preds=None,
             targets=None,

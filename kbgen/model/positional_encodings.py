@@ -87,7 +87,7 @@ class Pathing(ABC, nn.Module):
                 ],
                 batch_first=True,
             )
-            print("paths:", paths)
+            # print("paths:", paths)
             self.register_buffer("paths", paths)
             self.register_buffer("blank_x", torch.zeros(1, len(paths), d_model))
         elif embedding_type == "node":

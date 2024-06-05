@@ -30,7 +30,7 @@ class RunTracker:
 
         if self.config["wandb"]:
             wandb.init(
-                project="DiSK-{}-d{}-e{}".format(
+                project="DiSK-{}-data{}-e{}".format(
                     self.config["dataset"],
                     self.config["num_data"],
                     self.config["epochs"],
@@ -140,16 +140,22 @@ def random_id():
 
 def generate_name(config: NamespaceDict) -> str:
     name = f"{datetime.now().strftime('%m-%d-%H-%M-%S')}"
+    name = ""
     name += "-".join(config.tags)
     # add random string to avoid name collisions
-    name += f"-{random_id()}"
+    # name += f"-{random_id()}"
     if config["text_model"] == "custom":
         name += f"_L{config.num_layers}td{config.text_decoder_layers}"
         name += f"_te{config.text_encoder_layers}"
     else:
         name += f"_{config.text_model}"
+    name += f"_n{config.num_data}"
+    name += f"_e{config.epochs}"
     name += f"_d{config.d_model}"
-    name += f"{config.dataset}"
+    name += f"_b{config.batch_size}"
+    name += f"_lr{config.lr}"
+    name += f"_do{config.dropout}"
+    name += f"_{config.dataset}"
     return name
 
 

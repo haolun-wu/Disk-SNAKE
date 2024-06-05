@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import torch.nn.functional as F
 
 
-def compute_min_ce_loss(prediction, ground_truth):
+def compute_min_ce_loss(prediction, ground_truth, ignore_index=0):
     # prediction: shape (num_masks, seq_len, vocab_size)
     # ground_truth: shape (num_masks, seq_len)
 
@@ -20,10 +20,13 @@ def compute_min_ce_loss(prediction, ground_truth):
     for i in range(num_masks):
         for j in range(num_masks):
             # Expand ground truth to have shape (seq_len, vocab_size) for F.cross_entropy
-            ground_truth_expanded = ground_truth[j].view(-1)
-            prediction_expanded = prediction[i].view(-1, vocab_size)
+            ground_truth_expanded = ground_truth[j].view(-1)  # (seq_len, vocab_size)
+            prediction_expanded = prediction[i].view(-1, vocab_size)  # (seq_len)
             ce_loss_matrix[i, j] = F.cross_entropy(
-                prediction_expanded, ground_truth_expanded, reduction="mean"
+                prediction_expanded,
+                ground_truth_expanded,
+                ignore_index=ignore_index,
+                reduction="mean",
             )
 
     # Select the minimum loss for each prediction
@@ -45,6 +48,13 @@ def random_mask(*shape, mask_rate=0.8, device=None, seed=None):
         # set fixed seed for noise
         g = torch.Generator().manual_seed(seed) if seed is not None else None
         mask.masked_fill_(torch.rand(*shape, generator=g) < mask_rate, -torch.inf)
+
+        # Ensure at least one mask in one batch overall all fields
+        if (mask == -torch.inf).sum().item() == 0:
+            # Randomly select one position to mask
+            random_index = torch.randint(0, mask.numel(), (1,), generator=g)
+            mask.view(-1)[random_index] = -torch.inf
+
         mask = mask.to(device)
     return mask
 

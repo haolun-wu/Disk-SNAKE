@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from copy import deepcopy
 
 
 from typing import Optional, Tuple, Union
@@ -15,7 +16,7 @@ from ..utils import (
     GMMLoss,
     compute_min_ce_loss,
 )
-from ..utils.metrics import Accuracy
+from ..utils.metrics import Accuracy, Recall
 from .transformer import TransformerEncoder
 from .modules import (
     TextModule,
@@ -111,6 +112,12 @@ class KBFormer(nn.Module):
             ignore_idx_num=config["numerical_pad_token_id"],
         )
 
+        self.recall = Recall(
+            fields=config["fields"],
+            ignore_idx_cat=config["categorical_pad_token_id"],
+            ignore_idx_num=config["numerical_pad_token_id"],
+        )
+
     def encode_properties(
         self,
         input_dict: TensorDict,
@@ -180,8 +187,8 @@ class KBFormer(nn.Module):
         if attention_mask is not None:
             attention_mask = self.text_model._shift_right(attention_mask)
         pred = self.text_model.decoder(
-            input_ids=target,
-            encoder_hidden_states=condition,
+            input_ids=target,  # (batch_size, seq_len)
+            encoder_hidden_states=condition,  # (batch_size, 1, d_model) for each field
             attention_mask=attention_mask,
         )
         return pred
@@ -268,7 +275,7 @@ class KBFormer(nn.Module):
         """
         out, hierarchy_encodings = self.get_all_encodings(
             input_dict, key_padding_mask, property_mask, use_path_emb
-        )
+        )  # out: (batch_size, num_fields, d_model)
         params = self._get_probabilistic_params_from_encodings(out, hierarchy_encodings)
         return TensorDict(params, fields=input_dict.fields)
 
@@ -278,25 +285,24 @@ class KBFormer(nn.Module):
         tgt_token_dict: TensorDict,
         property_mask: torch.Tensor,
     ) -> Tuple:
-        loss = {}
+        # Initialize lists to collect predictions and targets
+        all_samples = []
+        all_targets = []
+        full_loss = 0
+
+        # Determine the positions where the property is masked
+        batch_masked_positions = (property_mask == float("-inf")).nonzero(
+            as_tuple=True
+        )[0]
+        batch_num_masks = batch_masked_positions.numel()
+
         # if all elements in a batch are masked the loss will be an empty tensor
         # we can also get a nan?
         for idx, field in enumerate(self.config["fields"].all_fields):
             target = tgt_token_dict[field]
             prob_param = prob_params[field]
-            p_mask = property_mask[:, idx]
-            if field in self.config["fields"]["numerical"]:
-                token_mask = target != self.config["numerical_pad_token_id"]
-                target = target.view(-1)  # Should already be flat
-                # prob_param should be shape [batch_size, num_mixtures * 3]
-                l_ = self.gmm_loss(prob_param, target)
-                loss[field] = reduce_by_mask(l_, p_mask, token_mask)
-            elif field in self.config["fields"]["categorical"]:
-                target = tgt_token_dict[field]
-                token_mask = target != self.config["categorical_pad_token_id"]
-                l_ = self.ce_loss(prob_param, target)
-                loss[field] = reduce_by_mask(l_, p_mask, token_mask)
-            elif field in self.config["fields"]["text"]:
+            # The names-set model only assumes "text" fields
+            if field in self.config["fields"]["text"]:
                 # because prob params for text are not logits, we have to get those first
                 token_mask = target != self.config["categorical_pad_token_id"]
                 key_padding_mask = (~token_mask).float()
@@ -304,67 +310,43 @@ class KBFormer(nn.Module):
                     "-inf"
                 )  # 0 for valid tokens, -inf for masked tokens
                 sample = self.generate_text_logits(prob_param, target, key_padding_mask)
-                # sample: (batch_size, seq_len, d_model)
+                # sample: (batch_size, seq_len, vocab_size)
                 # target: (batch_size, seq_len)
+                all_samples.append(sample.unsqueeze(1))  # Add a dimension for the field
+                all_targets.append(target.unsqueeze(1))  # Add a dimension for the field
 
-                # Determine the positions where the property is masked
-                masked_positions = (p_mask == float("-inf")).nonzero(as_tuple=True)[0]
-                num_masks = masked_positions.numel()
-                if num_masks == 0:
-                    continue
+        # Combine all fields into single tensors
+        all_samples = torch.cat(
+            all_samples, dim=1
+        )  # (batch_size, num_fields, seq_len, vocab_size)
+        all_targets = torch.cat(all_targets, dim=1)  # (batch_size, num_fields, seq_len)
 
-                # Select masked samples and targets based on masked positions
-                masked_preds = sample[masked_positions]  # (num_masks, seq_len, d_model)
-                masked_targets = target[masked_positions]  # (num_masks, seq_len)
+        # Process each row (sample) based on the property mask
+        for i in range(all_samples.size(0)):
+            # Determine the positions where the property is masked
+            row_masked_positions = (property_mask[i, :] == float("-inf")).nonzero(
+                as_tuple=True
+            )[0]
+            if row_masked_positions.numel() == 0:
+                continue
 
-                min_losses = compute_min_ce_loss(masked_preds, masked_targets)
-                loss[field] = min_losses.mean()
+            # Select masked predictions and targets for the current row
+            row_masked_preds = all_samples[
+                i, row_masked_positions, :, :
+            ]  # (row_mask, seq_len, vocab_size)
+            row_masked_targets = all_targets[
+                i, row_masked_positions, :
+            ]  # (row_mask, seq_len)
 
-        return loss
-
-    def get_metrics_from_prob_params(
-        self,
-        prob_params: TensorDict,
-        tgt_token_dict: TensorDict,
-        property_mask: torch.Tensor,
-        unscale: bool = False,
-        dataset=None,
-    ):
-        if unscale:
-            assert (
-                dataset is not None
-            ), "Give the dataset to unscale (it has the required info)"
-
-        pred_dict = TensorDict(fields=prob_params.fields)
-        for field in prob_params:
-            pred_dict[field] = self._sample_field_with_temp(
-                prob_params[field],
-                temp=0,
-                field=field,
-                target=tgt_token_dict[field],
-                teacher_forcing=True,
+            # Compute the cross-entropy loss for the current row's masked positions
+            row_min_losses = compute_min_ce_loss(
+                row_masked_preds,
+                row_masked_targets,
+                ignore_index=self.config["categorical_pad_token_id"],
             )
-        # Compute accuracy
-        # TODO only use tensors here
-        if not isinstance(property_mask, dict):
-            # property_mask = property_mask.bool() # does this waste mem
-            mask_dict = TensorDict(
-                {
-                    field: property_mask[:, idx].bool()
-                    for (idx, field) in enumerate(self.config["fields"].all_fields)
-                }
-            )
-        else:
-            mask_dict = property_mask.bool()
+            full_loss += row_min_losses.sum()
 
-        errors = {
-            k: v
-            for k, v in self.accuracy(
-                pred_dict, tgt_token_dict, mask_dict, unscale, dataset
-            ).items()
-        }
-
-        return errors
+        return full_loss / batch_num_masks
 
     def forward(
         self,
@@ -379,15 +361,19 @@ class KBFormer(nn.Module):
             property_mask,
             use_path_emb,
         )
-        losses = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
-        losses["mean"] = (loss := mean(losses))
-        return ModelOutputs(
-            preds=prob_params,
-            targets=tgt_dict,
-            property_mask=property_mask,
-            loss=loss,
-            loss_dict=losses,
-            error_dict=None,
+        # losses = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
+        # losses["mean"] = (loss := mean(losses))
+        loss = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
+        return (
+            ModelOutputs(
+                preds=prob_params,
+                targets=tgt_dict,
+                property_mask=property_mask,
+                loss=loss,
+                loss_dict=None,
+                error_dict=None,
+            ),
+            prob_params,
         )
 
     def apply(
@@ -406,12 +392,15 @@ class KBFormer(nn.Module):
             ],  # select masking rate
             seed=self.config["seed"] if eval_mode else None,  # fix seed for test set
         )
-        output = self.forward(tgt_dict, key_padding_mask, property_mask, use_path_emb)
+        output, prob_params = self.forward(
+            tgt_dict, key_padding_mask, property_mask, use_path_emb
+        )
 
         if eval_mode:
-            output.error_dict = self.get_metrics_from_prob_params(
-                output.preds,
+            output.error_dict = self.get_metrics_from_prob_params_iterative_update(
+                prob_params,
                 tgt_dict,
+                key_padding_mask,
                 property_mask,
                 unscale=unscale,
                 dataset=dataset,
@@ -499,35 +488,136 @@ class KBFormer(nn.Module):
 
     """OTHERS for eval"""
 
-    def generate_text_autoregressive(self, condition, temp=0.0, max_len=20):
-        # make initial input
-        batch_size = condition.shape[0]
-        current_input = torch.full(
-            (batch_size, 1),
-            self.config["categorical_pad_token_id"],
-            device=condition.device,
-        )
-        for i in range(max_len):
-            pred = self.text_model.decoder(
-                input_ids=current_input,
-                encoder_hidden_states=condition,
+    def get_metrics_from_prob_params_iterative_update(
+        self,
+        prob_params: TensorDict,
+        tgt_token_dict: TensorDict,
+        key_padding_mask: TensorDict,
+        property_mask: torch.Tensor,
+        unscale: bool = False,
+        dataset=None,
+    ):
+        # new_tgt_token_dict = deepcopy(tgt_token_dict)
+        pred_dict = deepcopy(tgt_token_dict)
+        new_key_padding_mask = deepcopy(key_padding_mask)
+        new_property_mask = deepcopy(property_mask)
+
+        if unscale:
+            assert (
+                dataset is not None
+            ), "Give the dataset to unscale (it has the required info)"
+
+        # pred_dict = TensorDict(fields=prob_params.fields)
+        col_num = 0
+        for field in list(prob_params.keys()):
+            pred_cur_field = self._sample_field_with_temp(
+                prob_params[field],
+                temp=0,
+                field=field,
+                target=pred_dict[field],
+                teacher_forcing=False,
             )
-            pred = pred[:, -1, :]
-            if temp == 0:
-                current_input = torch.cat(
-                    (current_input, pred.argmax(-1, keepdim=True)), -1
-                )
-            else:
-                probs = torch.softmax(pred / temp, dim=-1)
-                current_input = torch.cat(
-                    (current_input, torch.multinomial(probs, 1)), -1
-                )
+            # only replace those masked values. Others use ground truth due to unmasked
+            mask_positions = property_mask[:, col_num] == float("-inf")
+            pred_dict[field][mask_positions] = pred_cur_field[mask_positions]
 
-            # if all have EOS, stop
-            # if (current_input == self.text_model.tokenizer.eos_token_id).all():
-            #     break
+            """Re-encode the table after predicting a field"""
+            # update input_dict (this is the latest pred_dict)
+            # update padding mask and property mask
+            pad_mask_cur_field = torch.zeros_like(pred_dict[field], dtype=torch.float)
+            pad_mask_cur_field[pred_cur_field == 0] = float("-inf")
+            new_key_padding_mask[field] = pad_mask_cur_field
+            new_property_mask[:, col_num] = 0
 
-        return current_input[:, 1:]
+            # new_tgt_token_dict[field] = pred_cur_field
+
+            # update prob_params
+            prob_params = self.get_probabilistic_params(
+                pred_dict,
+                new_key_padding_mask,
+                new_property_mask,
+                use_path_emb=False,
+            )
+
+            col_num += 1
+
+        # Compute accuracy
+        # TODO only use tensors here
+        if not isinstance(property_mask, dict):
+            # property_mask = property_mask.bool() # does this waste mem
+            mask_dict = TensorDict(
+                {
+                    field: property_mask[:, idx].bool()
+                    for (idx, field) in enumerate(self.config["fields"].all_fields)
+                }
+            )
+        else:
+            mask_dict = property_mask.bool()
+
+        # errors = {
+        #     k: v
+        #     for k, v in self.accuracy(
+        #         pred_dict, tgt_token_dict, mask_dict, unscale, dataset
+        #     ).items()
+        # }
+        recall_list, correct_list, num_masks_list, pred_seq_list, target_seq_list = (
+            self.recall(
+                pred_dict,
+                tgt_token_dict,
+                mask_dict,
+                unscale,
+                dataset,
+                eos_token_id=dataset.tokenizer.eos_token_id,
+            )
+        )
+
+        return recall_list, correct_list, num_masks_list, pred_seq_list, target_seq_list
+
+    def get_metrics_from_prob_params(
+        self,
+        prob_params: TensorDict,
+        tgt_token_dict: TensorDict,
+        property_mask: torch.Tensor,
+        unscale: bool = False,
+        dataset=None,
+    ):
+        if unscale:
+            assert (
+                dataset is not None
+            ), "Give the dataset to unscale (it has the required info)"
+
+        pred_dict = TensorDict(fields=prob_params.fields)
+        for field in prob_params:
+            pred_dict[field] = self._sample_field_with_temp(
+                prob_params[field],
+                temp=0,
+                field=field,
+                target=tgt_token_dict[field],
+                # teacher_forcing=True,
+                teacher_forcing=False,
+            )
+
+        # Compute accuracy
+        # TODO only use tensors here
+        if not isinstance(property_mask, dict):
+            # property_mask = property_mask.bool() # does this waste mem
+            mask_dict = TensorDict(
+                {
+                    field: property_mask[:, idx].bool()
+                    for (idx, field) in enumerate(self.config["fields"].all_fields)
+                }
+            )
+        else:
+            mask_dict = property_mask.bool()
+
+        errors = {
+            k: v
+            for k, v in self.accuracy(
+                pred_dict, tgt_token_dict, mask_dict, unscale, dataset
+            ).items()
+        }
+
+        return errors
 
     def _sample_field_with_temp(
         self,
@@ -563,6 +653,38 @@ class KBFormer(nn.Module):
                     proba = proba.view(-1, proba.shape[-1])
                     decisions = torch.multinomial(proba, 1)
                     return decisions.view(shape[:-1])
+
+    def generate_text_autoregressive(self, condition, temp=0.0, max_len=7):
+        # make initial input
+        batch_size = condition.shape[0]
+        current_input = torch.full(
+            (batch_size, 1),
+            self.config["categorical_pad_token_id"],
+            device=condition.device,
+        )
+        for i in range(max_len):
+            pred = self.text_model.decoder(
+                input_ids=current_input,
+                encoder_hidden_states=condition,
+            )
+            pred = pred[:, -1, :]
+            if temp == 0:
+                current_input = torch.cat(
+                    (current_input, pred.argmax(-1, keepdim=True)), -1
+                )
+            else:
+                probs = torch.softmax(pred / temp, dim=-1)
+                current_input = torch.cat(
+                    (current_input, torch.multinomial(probs, 1)), -1
+                )
+
+            # if all have EOS, stop
+            # if (current_input == self.text_model.tokenizer.eos_token_id).all():
+            #     break
+
+        res = current_input[:, 1:]
+
+        return res
 
     """Only used for GMM"""
 

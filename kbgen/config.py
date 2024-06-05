@@ -7,7 +7,7 @@ rootdir='logdir'
 
 common_defaults = {
     "dataset": "date-set-order-N",         # gsm, nuclear, homedepot, iris
-    "d_model": 32,             # Model dimension, must be divisible by nhead
+    "d_model": 64,             # Model dimension, must be divisible by nhead
     "d_ff_mult": 2,             # Multiplier for the inner dim in feed forward layer
     "nhead": 4,                 # Number of attention heads in Entity encoder + text model if custom
     "num_layers": 2,            # Entity encoder layers for entity Encoder
@@ -22,10 +22,10 @@ common_defaults = {
     "condition_decoders_on_hierarchy": 0,
     "tie_mask_embeddings": 0,        # Tie mask embeddings across fields (mask embs are what the entity encoder sees)
     "epochs": 10,          # Number of epochs to train for
-    "batch_size": 1024,        # Batch size
+    "batch_size": 64,        # Batch size
     "lr": 1e-2,              # Learning rate
     "weight_decay": 0.,     # Weight decay
-    "dropout": 0.1,          # Dropout
+    "dropout": 0.0,          # Dropout
     "train_mask_rate": -1.,   # Masking rate for properties during train
     "eval_mask_rate": 0.5,   # Masking rate for properties during eval
     "wandb": 0,          # Use wandb for logging (requires wandb login) otherwise nothing is logged
@@ -40,7 +40,7 @@ common_defaults = {
     "float_precision": "float32",  # float32, float16, float64
     "never_mask": [],         # Properties that are never masked
     "use_path_emb": True,         # Whether to use the path embedding
-    "num_data": 10000,         # Whether to use the path embedding
+    "num_data": 100,         # Whether to use the path embedding
 }
 
 defaults_customLM = common_defaults.copy()
