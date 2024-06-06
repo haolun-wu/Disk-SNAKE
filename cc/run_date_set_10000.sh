@@ -16,7 +16,7 @@ for lr in "${lrs[@]}"; do
 #!/bin/bash
 #SBATCH --output=${output_file}
 #SBATCH --gres=gpu:a100l:1
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --partition=unkillable
