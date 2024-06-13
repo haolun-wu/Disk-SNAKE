@@ -9,16 +9,17 @@ for lr in "${lrs[@]}"; do
     for dropout in "${dropouts[@]}"; do
 
         # Generate a unique output file for each job to avoid overwriting
-        output_file="/home/mila/h/haolun.wu/projects/Disk-SNAKE/exp_out/date-set-order-N_5k_lr${lr}_dropout${dropout}.out"
+        output_file="/home/mila/h/haolun.wu/projects/Disk-SNAKE/exp_out/date-set-order-N_1k_lr${lr}_dropout${dropout}.out"
 
         # Launch a separate job for each hyperparameter combination
         sbatch <<EOL
 #!/bin/bash
 #SBATCH --output=${output_file}
 #SBATCH --gres=gpu:a100l:1
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=60G
+#SBATCH --mem=32G
+#SBATCH --partition=unkillable
 
 source /home/mila/h/haolun.wu/projects/Disk-SNAKE/venv/bin/activate
 module load python/3.10
@@ -26,7 +27,7 @@ module load python/3.10
 nvidia-smi
 
 # Run your script with the current hyperparameter combination
-python3 /home/mila/h/haolun.wu/projects/Disk-SNAKE/train.py --dataset=date-set-order-N --num_data=5000 --epochs=5000 --wandb=1 --lr=${lr} --dropout=${dropout}
+python3 /home/mila/h/haolun.wu/projects/Disk-SNAKE/train.py --dataset=date-set-order-N --num_data=1000 --epochs=5000 --wandb=1 --lr=${lr} --dropout=${dropout}
 
 deactivate
 EOL

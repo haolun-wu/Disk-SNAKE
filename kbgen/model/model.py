@@ -170,6 +170,7 @@ class KBFormer(nn.Module):
                     codes[:, idx] = output[:, 0]
                 else:
                     codes[:, idx] = output.last_hidden_state[:, 0]
+
         return codes  # shape: (#train_samples, #fields, #d)
 
     def generate_text_logits(self, condition, target, key_padding_mask):
@@ -252,12 +253,12 @@ class KBFormer(nn.Module):
             codes += hierarchy_encodings  # [batch_size, num_fields, d_model]
         else:
             pass
-
+        
         # testing attend to all
         return (
             self.entity_encoder(
                 codes, attention_mask=property_mask
-            ),  # property_mask: [batch_size, seq_len]
+            ),  # property_mask: [batch_size, num_fields]
             hierarchy_encodings,
         )
 
