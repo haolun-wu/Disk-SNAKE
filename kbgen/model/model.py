@@ -100,6 +100,9 @@ class KBFormer(nn.Module):
                 )
             )
 
+        # training, how to choose GT
+        self.gt_choose = config["gt_choose"]
+        
         # metrics
         self.ce_loss = nn.CrossEntropyLoss(
             ignore_index=config["categorical_pad_token_id"], reduction="none"
@@ -121,6 +124,7 @@ class KBFormer(nn.Module):
     def encode_properties(
         self,
         input_dict: TensorDict,
+        num_mask: int,
         key_padding_mask: Optional[TensorDict] = None,
     ) -> torch.Tensor:
         """
@@ -137,15 +141,18 @@ class KBFormer(nn.Module):
             dict: A dictionary containing the encoded representations of the input data.
         """
         all_fields = self.config["fields"].all_fields
+        fields_num = (
+            len(all_fields) - num_mask + 1
+        )  # each time, we decode one mask. Equal: num_unmask+1
         codes = torch.empty(
             (
                 input_dict.size(),
-                len(all_fields),
+                fields_num,
                 self.config["d_model"],
             ),
             device=input_dict.device(),
         )
-        for idx, field in enumerate(all_fields):
+        for idx, field in enumerate(all_fields[:-num_mask]):  # Only encode unmasked
             if (
                 field
                 in self.config["fields"]["numerical"]
@@ -171,7 +178,7 @@ class KBFormer(nn.Module):
                 else:
                     codes[:, idx] = output.last_hidden_state[:, 0]
 
-        return codes  # shape: (#train_samples, #fields, #d)
+        return codes  # shape: (#batch_size, #unmask+1, #d_model)
 
     def generate_text_logits(self, condition, target, key_padding_mask):
         # torch transformers expect float masks with
@@ -197,6 +204,7 @@ class KBFormer(nn.Module):
     def _get_probabilistic_params_from_encodings(
         self,
         entity_embeddings: torch.Tensor,
+        num_mask: int,
         hierarchy_embeddings: torch.Tensor = None,
     ) -> TensorDict:
         """
@@ -205,8 +213,12 @@ class KBFormer(nn.Module):
         categorical: logits
         text: simply copy the entity embeddings. logits are not enough, because autoregressive generation has to condition on the entity.
         """
+        all_fields = self.config["fields"].all_fields
+        fields_num = (
+            len(all_fields) - num_mask + 1
+        )  # each time, we decode one mask. Equal: num_unmask+1
         prob_params = {}
-        for idx, field in enumerate(self.config["fields"].all_fields):
+        for idx, field in enumerate(self.config["fields"].all_fields[:fields_num]):
             if field in self.config["fields"]["text"]:
                 params = entity_embeddings[:, [idx]]  # (batch_size, 1, d_model)
             elif field in self.config["fields"]["numerical"]:
@@ -226,39 +238,47 @@ class KBFormer(nn.Module):
             prob_params[field] = params
             if prob_params[field].isnan().any():
                 raise ValueError(f"Pred {field} is NaN. It's Debugging time...")
-        return TensorDict(prob_params, fields=self.config["fields"])
+
+        return TensorDict(
+            prob_params, fields=self.config["fields"]
+        )  # no worry about this, surplus fields will be ignored automatically. The length is still num_unmask+1
 
     def get_all_encodings(
         self,
         input_dict: TensorDict,
         key_padding_mask: Optional[TensorDict] = None,
         property_mask: Optional[TensorDict] = None,
+        num_mask: Optional[int] = 1,
         use_path_emb: bool = True,
     ):
         # 1. HIERARCHY: generate hierarchy encodings for each proprty
-        hierarchy_encodings = self.hierarchy_encoder.get_all_paths()
-        # shape is [num_fields, d_model]
+        all_fields = self.config["fields"].all_fields
+        fields_num = (
+            len(all_fields) - num_mask + 1
+        )  # each time, we decode one mask. Equal: num_unmask+1
+        hierarchy_encodings = self.hierarchy_encoder.get_all_paths()[:fields_num]
+        # shape is [num_unmask+1, d_model]
 
         # 2. ENCODE: encode each field
         # TODO pass hierarchy encodings to encoder
-        codes = self.encode_properties(input_dict, key_padding_mask)
+        codes = self.encode_properties(input_dict, num_mask, key_padding_mask)
 
         # 3. MASK: Apply property_mask to codes
         codes, property_mask = self._merge_and_apply_masks(
-            codes, key_padding_mask, property_mask, inplace=True
+            codes, key_padding_mask, property_mask, num_mask, inplace=True
         )
 
         # 4. ATTEND: Self-attention over all fields
         if use_path_emb:
-            codes += hierarchy_encodings  # [batch_size, num_fields, d_model]
+            codes += hierarchy_encodings  # [batch_size, num_unmask+1, d_model]
         else:
             pass
-        
+
         # testing attend to all
         return (
             self.entity_encoder(
                 codes, attention_mask=property_mask
-            ),  # property_mask: [batch_size, num_fields]
+            ),  # property_mask: [batch_size, num_unmask+1]
             hierarchy_encodings,
         )
 
@@ -267,17 +287,20 @@ class KBFormer(nn.Module):
         input_dict: TensorDict,
         key_padding_mask: Optional[TensorDict] = None,
         property_mask: Optional[TensorDict] = None,
+        num_mask: Optional[int] = 1,
         use_path_emb: bool = True,
     ) -> TensorDict:
         """
         # Return the sampled tensor for each field
-        # If the codes is of shape (batch_size, num_fields, d_model)
-        # Then the retuned TensorDict has num_fields k:v, and each v is of shape (batch_size, 1, d_model)
+        # If the codes is of shape (batch_size, num_unmask+1, d_model)
+        # Then the retuned TensorDict has (num_unmask+1) fields k:v, and each v is of shape (batch_size, 1, d_model)
         """
         out, hierarchy_encodings = self.get_all_encodings(
-            input_dict, key_padding_mask, property_mask, use_path_emb
-        )  # out: (batch_size, num_fields, d_model)
-        params = self._get_probabilistic_params_from_encodings(out, hierarchy_encodings)
+            input_dict, key_padding_mask, property_mask, num_mask, use_path_emb
+        )  # out: (batch_size, num_unmask+1, d_model)
+        params = self._get_probabilistic_params_from_encodings(
+            out, num_mask, hierarchy_encodings
+        )  # length is num_unmask+1
         return TensorDict(params, fields=input_dict.fields)
 
     def get_loss_from_prob_params(
@@ -285,25 +308,25 @@ class KBFormer(nn.Module):
         prob_params: TensorDict,
         tgt_token_dict: TensorDict,
         property_mask: torch.Tensor,
+        num_mask: int,
     ) -> Tuple:
         # Initialize lists to collect predictions and targets
-        all_samples = []
-        all_targets = []
-        full_loss = 0
+        batch_size = property_mask.shape[0]
+        all_fields = self.config["fields"].all_fields
+        fields_num = (
+            len(all_fields) - num_mask + 1
+        )  # each time, we decode one mask. Equal: num_unmask+1
 
-        # Determine the positions where the property is masked
-        batch_masked_positions = (property_mask == float("-inf")).nonzero(
-            as_tuple=True
-        )[0]
-        batch_num_masks = batch_masked_positions.numel()
+        # The last field that is masked
+        field_masked = all_fields[fields_num - 1]
+        prob_param = prob_params[field_masked]
 
-        # if all elements in a batch are masked the loss will be an empty tensor
-        # we can also get a nan?
-        for idx, field in enumerate(self.config["fields"].all_fields):
-            target = tgt_token_dict[field]
-            prob_param = prob_params[field]
-            # The names-set model only assumes "text" fields
-            if field in self.config["fields"]["text"]:
+        if self.gt_choose == 'random':
+            """Option 1: Randomly select one as ground truth"""
+            # Get target and probability parameter for the last field
+            target = tgt_token_dict[field_masked]  # Already random, due to permutation during preprocess
+
+            if field_masked in self.config["fields"]["text"]:
                 # because prob params for text are not logits, we have to get those first
                 token_mask = target != self.config["categorical_pad_token_id"]
                 key_padding_mask = (~token_mask).float()
@@ -311,60 +334,72 @@ class KBFormer(nn.Module):
                     "-inf"
                 )  # 0 for valid tokens, -inf for masked tokens
                 sample = self.generate_text_logits(prob_param, target, key_padding_mask)
-                # sample: (batch_size, seq_len, vocab_size)
+
+                # prob_param: (batch_size, 1, d_model)
                 # target: (batch_size, seq_len)
-                all_samples.append(sample.unsqueeze(1))  # Add a dimension for the field
-                all_targets.append(target.unsqueeze(1))  # Add a dimension for the field
+                # sample: (batch_size, seq_len, vocab)
+                # p_mask: (batch_size)
+                # key_padding_mask: (batch_size, seq_len)
+                target = target.view(-1)  # batch * seq
+                sample = sample.reshape(target.shape[0], -1)
+                loss = self.ce_loss(sample, target)  # The full field is masked
+                loss = loss.mean()
+        elif self.gt_choose == 'decide':
+            """Option 2: choose the highest possible ground truth"""
+            # Get the last several masked columns
+            masked_fields = all_fields[-num_mask:]
 
-        # Combine all fields into single tensors
-        all_samples = torch.cat(
-            all_samples, dim=1
-        )  # (batch_size, num_fields, seq_len, vocab_size)
-        all_targets = torch.cat(all_targets, dim=1)  # (batch_size, num_fields, seq_len)
+            # Initialize a list to store loss for each possible ground truth
+            loss_matrix = []
 
-        # Process each row (sample) based on the property mask
-        for i in range(all_samples.size(0)):
-            # Determine the positions where the property is masked
-            row_masked_positions = (property_mask[i, :] == float("-inf")).nonzero(
-                as_tuple=True
-            )[0]
-            if row_masked_positions.numel() == 0:
-                continue
+            for field in masked_fields:
+                target = tgt_token_dict[field]
+                if field in self.config["fields"]["text"]:
+                    # because prob params for text are not logits, we have to get those first
+                    token_mask = target != self.config["categorical_pad_token_id"]
+                    key_padding_mask = (~token_mask).float()
+                    key_padding_mask[key_padding_mask == 1] = float(
+                        "-inf"
+                    )  # 0 for valid tokens, -inf for masked tokens
+                    sample = self.generate_text_logits(prob_param, target, key_padding_mask)
 
-            # Select masked predictions and targets for the current row
-            row_masked_preds = all_samples[
-                i, row_masked_positions, :, :
-            ]  # (row_mask, seq_len, vocab_size)
-            row_masked_targets = all_targets[
-                i, row_masked_positions, :
-            ]  # (row_mask, seq_len)
+                    # prob_param: (batch_size, 1, d_model)
+                    # target: (batch_size, seq_len)
+                    # sample: (batch_size, seq_len, vocab)
+                    # key_padding_mask: (batch_size, seq_len)
+                    target = target.view(-1)  # batch * seq
+                    sample = sample.reshape(target.shape[0], -1) # batch * seq, vocab
+                    l_ = self.ce_loss(sample, target)  # The full field is masked
+                    l_ = l_.view(batch_size, -1)
+                    loss_matrix.append(l_.mean(dim=1, keepdim=True))
 
-            # Compute the cross-entropy loss for the current row's masked positions
-            row_min_losses = compute_min_ce_loss(
-                row_masked_preds,
-                row_masked_targets,
-                ignore_index=self.config["categorical_pad_token_id"],
-            )
-            full_loss += row_min_losses.sum()
+            # Stack losses to form a matrix of shape (batch_size, num_mask)
+            loss_matrix = torch.cat(loss_matrix, dim=1)
+            min_loss, _ = loss_matrix.min(dim=1)  # Select the minimum loss for each sample
+            loss = min_loss.mean()
 
-        return full_loss / batch_num_masks
+        return loss
 
     def forward(
         self,
         tgt_dict: TensorDict,
         key_padding_mask: TensorDict,
         property_mask: TensorDict,
+        num_mask: int,
         use_path_emb: bool = True,
     ):
         prob_params = self.get_probabilistic_params(
             tgt_dict,
             key_padding_mask,
             property_mask,
+            num_mask,
             use_path_emb,
         )
         # losses = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
         # losses["mean"] = (loss := mean(losses))
-        loss = self.get_loss_from_prob_params(prob_params, tgt_dict, property_mask)
+        loss = self.get_loss_from_prob_params(
+            prob_params, tgt_dict, property_mask, num_mask
+        )
         return (
             ModelOutputs(
                 preds=prob_params,
@@ -386,7 +421,7 @@ class KBFormer(nn.Module):
         dataset=None,
         use_path_emb: bool = True,
     ) -> ModelOutputs:
-        property_mask = self._sample_property_mask(
+        property_mask, num_mask = self._sample_property_mask(
             tgt_dict,
             self.config[
                 "eval_mask_rate" if eval_mode else "train_mask_rate"
@@ -394,7 +429,7 @@ class KBFormer(nn.Module):
             seed=self.config["seed"] if eval_mode else None,  # fix seed for test set
         )
         output, prob_params = self.forward(
-            tgt_dict, key_padding_mask, property_mask, use_path_emb
+            tgt_dict, key_padding_mask, property_mask, num_mask, use_path_emb
         )
 
         if eval_mode:
@@ -403,6 +438,7 @@ class KBFormer(nn.Module):
                 tgt_dict,
                 key_padding_mask,
                 property_mask,
+                num_mask,
                 unscale=unscale,
                 dataset=dataset,
             )
@@ -410,7 +446,12 @@ class KBFormer(nn.Module):
         return output
 
     def _merge_and_apply_masks(
-        self, codes: torch.Tensor, padding_mask=None, property_mask=None, inplace=False
+        self,
+        codes: torch.Tensor,
+        padding_mask=None,
+        property_mask=None,
+        num_mask=1,
+        inplace=False,
     ):
         """Utility function to cleanup the property_mask
         if the property mask is a dictionary converts it to a tensor
@@ -419,7 +460,7 @@ class KBFormer(nn.Module):
         is not None makes sure to ignore the missing properties in the data.
 
         Args:
-            codes (torch.Tensor): [batch_size, num_fields, d_model] tensor of
+            codes (torch.Tensor): [batch_size, num_unmask+1, d_model] tensor of
                 encoded properties.
             padding_mask (Any, optional): Token-level mask for padding. Defaults to None.
             property_mask (Any, optional): Mask for the fields (usually random)
@@ -434,9 +475,14 @@ class KBFormer(nn.Module):
         """
         if not inplace:
             codes = codes.clone()
+
+        all_fields = self.config["fields"].all_fields
+        fields_num = (
+            len(all_fields) - num_mask + 1
+        )  # each time, we decode one mask. Equal: num_unmask+1
         # convert to tensor
         if isinstance(property_mask, dict):
-            fields = self.config["fields"].all_fields
+            fields = self.config["fields"].all_fields[:fields_num]
             if not all(field in property_mask for field in fields):
                 raise ValueError("property_mask must contain a mask for all fields")
             property_mask = torch.stack(
@@ -448,12 +494,14 @@ class KBFormer(nn.Module):
                 codes[:, :, 0], dtype=torch.get_default_dtype()
             )
         else:
-            property_mask = property_mask.clone()
+            property_mask = property_mask[
+                :, :fields_num
+            ].clone()  # only the last column be -inf
 
         # do not attend to missing fields
         # assumes float masks with 0 for unmask and -inf for masked values
         if padding_mask is not None:
-            for idx, field in enumerate(self.config["fields"].all_fields):
+            for idx, field in enumerate(self.config["fields"].all_fields[:fields_num]):
                 field_type = self.config["fields"].type(field)
                 property_mask[:, idx] += is_missing(padding_mask[field], field_type)
 
@@ -495,11 +543,13 @@ class KBFormer(nn.Module):
         tgt_token_dict: TensorDict,
         key_padding_mask: TensorDict,
         property_mask: torch.Tensor,
+        num_mask: int,
         unscale: bool = False,
         dataset=None,
     ):
         # new_tgt_token_dict = deepcopy(tgt_token_dict)
-        pred_dict = deepcopy(tgt_token_dict)
+        # pred_dict = deepcopy(tgt_token_dict)
+
         new_key_padding_mask = deepcopy(key_padding_mask)
         new_property_mask = deepcopy(property_mask)
 
@@ -508,39 +558,48 @@ class KBFormer(nn.Module):
                 dataset is not None
             ), "Give the dataset to unscale (it has the required info)"
 
-        # pred_dict = TensorDict(fields=prob_params.fields)
-        col_num = 0
-        for field in list(prob_params.keys()):
+        # Focus on those masked fields
+        all_fields = self.config["fields"].all_fields
+        list_masked_fields = list(all_fields)[-num_mask:]
+
+        assert list(prob_params.keys())[-1] == list_masked_fields[0]
+
+        # Initialize pred_dict on those unmasked fields
+        pred_dict = TensorDict(fields=prob_params.fields)
+        # last_field_value = list(prob_params.values())[-1] if prob_params else None
+        
+        # Use the original value for those unmasked fields
+        for field in all_fields[:-num_mask]:
+            pred_dict[field] = deepcopy(tgt_token_dict[field])
+
+        for field in list_masked_fields:
             pred_cur_field = self._sample_field_with_temp(
                 prob_params[field],
                 temp=0,
                 field=field,
-                target=pred_dict[field],
+                # target=pred_dict[field],
                 teacher_forcing=False,
             )
-            # only replace those masked values. Others use ground truth due to unmasked
-            mask_positions = property_mask[:, col_num] == float("-inf")
-            pred_dict[field][mask_positions] = pred_cur_field[mask_positions]
+            # The entire masked column (field) is replaced by the prediction
+            pred_dict[field] = pred_cur_field
 
-            """Re-encode the table after predicting a field"""
-            # update input_dict (this is the latest pred_dict)
             # update padding mask and property mask
+            new_property_mask[:, -num_mask] = 0  # unmask the last field
+            num_mask -= 1  # number of masked fields reduce 1
+            if num_mask == 0:
+                break
             pad_mask_cur_field = torch.zeros_like(pred_dict[field], dtype=torch.float)
             pad_mask_cur_field[pred_cur_field == 0] = float("-inf")
             new_key_padding_mask[field] = pad_mask_cur_field
-            new_property_mask[:, col_num] = 0
-
-            # new_tgt_token_dict[field] = pred_cur_field
 
             # update prob_params
             prob_params = self.get_probabilistic_params(
                 pred_dict,
                 new_key_padding_mask,
                 new_property_mask,
+                num_mask,
                 use_path_emb=False,
             )
-
-            col_num += 1
 
         # Compute accuracy
         # TODO only use tensors here
@@ -627,7 +686,7 @@ class KBFormer(nn.Module):
         field,
         target=None,
         key_padding_mask=None,
-        teacher_forcing=True,
+        teacher_forcing=False,
     ):
         """Sample from a batch of prob_params with temperature."""
         if field in self.config["fields"]["numerical"]:

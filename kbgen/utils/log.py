@@ -30,7 +30,7 @@ class RunTracker:
 
         if self.config["wandb"]:
             wandb.init(
-                project="DiSK-{}-data{}-e{}".format(
+                project="DiSK-Set-Efficient-{}-data{}-e{}".format(
                     self.config["dataset"],
                     self.config["num_data"],
                     self.config["epochs"],
@@ -155,6 +155,7 @@ def generate_name(config: NamespaceDict) -> str:
     name += f"_b{config.batch_size}"
     name += f"_lr{config.lr}"
     name += f"_do{config.dropout}"
+    name += f"_gt_{config.gt_choose}"
     name += f"_{config.dataset}"
     return name
 

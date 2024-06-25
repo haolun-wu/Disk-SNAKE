@@ -21,13 +21,13 @@ common_defaults = {
                                            # 0 means individual decoders. n>0 is the number of experts used.
     "condition_decoders_on_hierarchy": 0,
     "tie_mask_embeddings": 1,        # Tie mask embeddings across fields (mask embs are what the entity encoder sees)
-    "epochs": 10,          # Number of epochs to train for
+    "epochs": 1,          # Number of epochs to train for
     "batch_size": 64,        # Batch size
-    "lr": 1e-2,              # Learning rate
+    "lr": 5e-3,              # Learning rate
     "weight_decay": 0.,     # Weight decay
     "dropout": 0.0,          # Dropout
     "train_mask_rate": -1.,   # Masking rate for properties during train
-    "eval_mask_rate": 0.5,   # Masking rate for properties during eval
+    "eval_mask_rate": -1,   # Masking rate for properties during eval
     "wandb": 0,          # Use wandb for logging (requires wandb login) otherwise nothing is logged
     "tags": [],        # Tags for wandb
     "device": "cuda",      # Device to use
@@ -40,7 +40,8 @@ common_defaults = {
     "float_precision": "float32",  # float32, float16, float64
     "never_mask": [],         # Properties that are never masked
     "use_path_emb": True,         # Whether to use the path embedding
-    "num_data": 100,         # Whether to use the path embedding
+    "num_data": 50,         # Whether to use the path embedding
+    "gt_choose": "random",         # "random" and "decide"
 }
 
 defaults_customLM = common_defaults.copy()

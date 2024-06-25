@@ -14,7 +14,7 @@ from functools import partial
 class Trainer:
     def __init__(self, config) -> None:
         self.config = config
-        self.save_step = 100 # save for every 100 epochs
+        self.save_step = 100  # save for every 100 epochs
         # set precision -----------------------------------------------------
         torch.set_default_dtype(getattr(torch, config.float_precision))
         # DATA -----------------------------------------------------
@@ -154,12 +154,14 @@ class Trainer:
                     # log the loss and metric
                     log_output_dict = {}
                     log_output_dict[f"inference on {split}/loss"] = loss_global[split]
-                    log_output_dict[f"inference on {split}/metric"] = metric_global[split]
+                    log_output_dict[f"inference on {split}/metric"] = metric_global[
+                        split
+                    ]
 
                     for k, v in log_output_dict.items():
                         print(f"{k}: {v}")
 
-                    print("Decode prediction and targte per sample:")
+                    print("Decode prediction and target per sample:")
                     for idx in range(len(pred_seq_list_full)):
                         pred = pred_seq_list_full[idx]
                         tgt = target_seq_list_full[idx]
@@ -191,6 +193,7 @@ class Trainer:
                         print("idx:", idx)
                         print("Prediction seq list:", pred_seq_list)
                         print("Target seq list:", tgt_seq_list)
+                        print("recall:", recall_list_full[idx])
 
                         # if self.dataset.tokenizer.eos_token_id in pred:
                         #     first_eos_occurence = pred.eq(self.dataset.tokenizer.eos_token_id).nonzero(as_tuple=True)[0][0]

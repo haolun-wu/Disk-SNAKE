@@ -36,27 +36,22 @@ def compute_min_ce_loss(prediction, ground_truth, ignore_index=0):
 
 
 def random_mask(*shape, mask_rate=0.8, device=None, seed=None):
-    # TODO add dtype support
-    # directly uses bool tensor ideally
     if mask_rate == 0:
         mask = torch.full(shape, 0.0, device=device)
     elif mask_rate == 1:
         mask = torch.full(shape, -torch.inf, device=device)
     else:
         mask_rate = torch.rand(1) if mask_rate == -1 else mask_rate
-        mask = torch.full(shape, 0.0)
-        # set fixed seed for noise
-        g = torch.Generator().manual_seed(seed) if seed is not None else None
-        mask.masked_fill_(torch.rand(*shape, generator=g) < mask_rate, -torch.inf)
-
-        # Ensure at least one mask in one batch overall all fields
-        if (mask == -torch.inf).sum().item() == 0:
-            # Randomly select one position to mask
-            random_index = torch.randint(0, mask.numel(), (1,), generator=g)
-            mask.view(-1)[random_index] = -torch.inf
-
-        mask = mask.to(device)
-    return mask
+        total_elements = shape[-1]
+        num_masked_elements = max(1, int(total_elements * mask_rate))
+        
+        # Create a mask with all elements set to 0.0
+        mask = torch.full(shape, 0.0, device=device)
+        
+        # Set the rightmost elements to -inf to represent the mask
+        mask[:, -num_masked_elements:] = -torch.inf
+    
+    return mask, num_masked_elements
 
 
 class SortedSet:
