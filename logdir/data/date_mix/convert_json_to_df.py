@@ -4,13 +4,12 @@ import numpy as np
 
 # Path to the JSON file
 file_path = (
-    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date/date_dataset.json"
+    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date_mix/date_dataset.json"
 )
 
 # Read the JSON file
 with open(file_path, "r") as file:
     json_data = file.read()
-
 
 # Convert JSON string to dictionary
 data_dict = json.loads(json_data)
@@ -23,36 +22,48 @@ for key, value in data_dict.items():
 # Convert dictionary to DataFrame
 df = pd.DataFrame.from_dict(data_dict, orient="index")
 
+# Reorder columns to have "Year", "Month", and "Day" as the first three columns
+columns_order = ["Year", "Month", "Day"] + [col for col in df.columns if col not in ["Year", "Month", "Day"]]
+df = df[columns_order]
+
 # Save the DataFrame to a CSV file
 df.to_csv(
-    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date/date_dataset.csv",
+    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date_mix/date_dataset.csv",
     index=False,
 )
-
 
 """ Set modeling for date """
-# Selecting the first 8 columns
-df = df.iloc[:, :8]
+# Selecting the first 11 columns (first three + next eight)
+df = df.iloc[:, :11]
 df.columns = ["date.{}".format(str(i)) for i in range(len(df.columns))]
 df.to_csv(
-    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date/date_dataset_order.csv",
+    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date_mix/date_dataset_order.csv",
     index=False,
 )
 
-
 def permute_rows(df):
-    permuted_df = df.apply(lambda row: pd.Series(np.random.permutation(row)), axis=1)
-    return permuted_df
+    # Separate the first three columns
+    fixed_columns = df.iloc[:, :3]
+    permutable_columns = df.iloc[:, 3:]
+    
+    # Permute the remaining columns
+    # permuted_columns = permutable_columns.apply(lambda row: np.random.permutation(row), axis=1)
+    permuted_columns = permutable_columns.apply(lambda row: list(np.random.permutation(row)), axis=1)
 
+    
+    # Concatenate the fixed and permuted columns back together
+    permuted_df = pd.concat([fixed_columns, permuted_columns], axis=1)
+    
+    return permuted_df
 
 # Apply the permutation function to the DataFrame
 permuted_df = permute_rows(df)
-permuted_df.columns = ["date.{}".format(str(i)) for i in range(len(df.columns))]
+permuted_df.columns = ["date.{}".format(str(i)) for i in range(len(permuted_df.columns))]
 permuted_df.to_csv(
-    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date/date_dataset_set.csv",
+    "/home/mila/h/haolun.wu/projects/Disk-SNAKE/logdir/data/date_mix/date_dataset_set_mix.csv",
     index=False,
 )
 
 
 # # Optionally, print the DataFrame to see the output
-# print(df)
+print(permuted_df)
