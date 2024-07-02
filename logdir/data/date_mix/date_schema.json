@@ -1,0 +1,19 @@
+{
+  "date": {
+    "YYYY-MM-DD": 2,
+    "DD/MM/YYYY": 2,
+    "MM/DD/YYYY": 2,
+    "DDth Month, YYYY": 2,
+    "Month DD, YYYY": 2,
+    "YYYY/MM/DD": 2,
+    "DD-MM-YYYY": 2,
+    "DD Mon YYYY": 2,
+    "Weekday, DD Mon YYYY": 2,
+    "Year": 0,
+    "MM": 0,
+    "Month": 2,
+    "DD": 0,
+    "Day": 2,
+    "Weekday": 0
+  }
+}
