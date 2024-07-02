@@ -23,7 +23,7 @@ for key, value in data_dict.items():
 df = pd.DataFrame.from_dict(data_dict, orient="index")
 
 # Reorder columns to have "Year", "Month", and "Day" as the first three columns
-columns_order = ["Year", "Month", "Day"] + [col for col in df.columns if col not in ["Year", "Month", "Day"]]
+columns_order = ["Year", "Month", "DD"] + [col for col in df.columns if col not in ["Year", "Month", "DD"]]
 df = df[columns_order]
 
 # Save the DataFrame to a CSV file
