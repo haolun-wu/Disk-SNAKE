@@ -256,7 +256,7 @@ class KBFormer(nn.Module):
         fields_num = (
             len(all_fields) - num_mask + 1
         )  # each time, we decode one mask. Equal: num_unmask+1
-        hierarchy_encodings = self.hierarchy_encoder.get_all_paths()[:fields_num]
+        hierarchy_encodings = self.hierarchy_encoder.get_all_paths().squeeze()[:fields_num]
         # shape is [num_unmask+1, d_model]
 
         # 2. ENCODE: encode each field
